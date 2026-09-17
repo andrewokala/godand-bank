@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
 from app.db.session import Base
-from app.models import Account, Transaction, Transfer, User
+from app.models import Account, AuditLog, IdempotencyKey, LedgerEntry, Transfer, User
 
 
 config = context.config

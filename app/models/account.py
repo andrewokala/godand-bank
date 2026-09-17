@@ -1,24 +1,58 @@
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String
+from sqlalchemy import (
+    Enum as SQLEnum,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 
 
+class AccountStatus(str, Enum):
+    ACTIVE = "active"
+    FROZEN = "frozen"
+    CLOSED = "closed"
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
-    id: Mapped[int] = mapped_column(
-        primary_key=True,
-        index=True,
+    __table_args__ = (
+        CheckConstraint(
+            "balance >= 0",
+            name="ck_accounts_balance_non_negative",
+        ),
+        CheckConstraint(
+            "account_number ~ '^[0-9]{10}$'",
+            name="ck_accounts_account_number_format",
+        ),
+        CheckConstraint(
+            "currency ~ '^[A-Z]{3}$'",
+            name="ck_accounts_currency_format",
+        ),
     )
 
-    user_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
         ForeignKey("users.id"),
+        unique=True,
         nullable=False,
-        index=True,
     )
 
     account_number: Mapped[str] = mapped_column(
@@ -29,31 +63,35 @@ class Account(Base):
     )
 
     balance: Mapped[Decimal] = mapped_column(
-        Numeric(15, 2),
-        default=Decimal("0.00"),
+        Numeric(18, 2),
         nullable=False,
+        default=Decimal("0.00"),
     )
 
     currency: Mapped[str] = mapped_column(
         String(3),
+        nullable=False,
         default="NGN",
-        nullable=False,
     )
 
-    status: Mapped[str] = mapped_column(
-        String(20),
-        default="active",
+    status: Mapped[AccountStatus] = mapped_column(
+        SQLEnum(
+            AccountStatus,
+            name="accountstatus",
+            values_callable=lambda enum_class: [member.value for member in enum_class],
+        ),
         nullable=False,
+        default=AccountStatus.ACTIVE,
     )
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=lambda: datetime.now(UTC),
+    version: Mapped[int] = mapped_column(
+        Integer,
         nullable=False,
+        default=0,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
         nullable=False,
@@ -62,11 +100,6 @@ class Account(Base):
     user = relationship(
         "User",
         back_populates="accounts",
-    )
-
-    transactions = relationship(
-        "Transaction",
-        back_populates="account",
     )
 
     sent_transfers = relationship(
@@ -79,4 +112,9 @@ class Account(Base):
         "Transfer",
         foreign_keys="Transfer.receiver_account_id",
         back_populates="receiver_account",
+    )
+
+    ledger_entries = relationship(
+        "LedgerEntry",
+        back_populates="account",
     )
