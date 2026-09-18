@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -23,7 +24,7 @@ class UserCreate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: int
+    id: UUID
 
     first_name: str
     last_name: str
@@ -36,14 +37,16 @@ class UserResponse(BaseModel):
         "from_attributes": True,
     }
 
+
 class UserLogin(BaseModel):
     email: EmailStr
 
     password: str = Field(
         min_length=8,
         max_length=128,
-)
-    
+    )
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

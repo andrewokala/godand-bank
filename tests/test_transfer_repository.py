@@ -1,7 +1,8 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.db.session import SessionLocal
-from app.models import User
+from app.models import User, TransferStatus
 from app.repositories.account import create_account
 from app.repositories.transfer import (
     create_transfer,
@@ -21,20 +22,23 @@ def test_transfer_repository():
     receiver_account_number = "6543210987"
 
     reference = "TRF-REPO-001"
+    idempotency_key = "repo-transfer-test-001"
 
     try:
         sender = User(
-            first_name="Sender",
-            last_name="Test",
+            full_name="Sender Test",
             email=sender_email,
+            phone="+2348012345004",
             password_hash="test_hash",
+            terms_accepted_at=datetime.now(UTC),
         )
 
         receiver = User(
-            first_name="Receiver",
-            last_name="Test",
+            full_name="Receiver Test",
             email=receiver_email,
+            phone="+2348012345005",
             password_hash="test_hash",
+            terms_accepted_at=datetime.now(UTC),
         )
 
         db.add_all([sender, receiver])
@@ -60,14 +64,19 @@ def test_transfer_repository():
             receiver_account_id=receiver_account.id,
             amount=Decimal("2500.00"),
             reference=reference,
+            currency="NGN",
+            idempotency_key=idempotency_key,
+            status=TransferStatus.SUCCESS,
         )
 
         assert transfer.id is not None
         assert transfer.sender_account_id == sender_account.id
         assert transfer.receiver_account_id == receiver_account.id
         assert transfer.amount == Decimal("2500.00")
+        assert transfer.currency == "NGN"
         assert transfer.reference == reference
-        assert transfer.status == "completed"
+        assert transfer.idempotency_key == idempotency_key
+        assert transfer.status == TransferStatus.SUCCESS
 
         saved_by_id = get_transfer_by_id(
             db=db,

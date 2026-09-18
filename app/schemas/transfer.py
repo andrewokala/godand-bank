@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -17,10 +18,12 @@ class TransferCreate(BaseModel):
 
 
 class TransferResponse(BaseModel):
-    id: int
-    sender_account_id: int
-    receiver_account_id: int
+    id: UUID
+    sender_account_id: UUID
+    receiver_account_id: UUID
     amount: Decimal
+    currency: str
+    note: str | None
     reference: str
     status: str
     created_at: datetime

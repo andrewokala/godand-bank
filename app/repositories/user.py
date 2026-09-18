@@ -1,3 +1,6 @@
+import uuid
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -6,16 +9,18 @@ from app.models import User
 
 def create_user(
     db: Session,
-    first_name: str,
-    last_name: str,
+    full_name: str,
     email: str,
+    phone: str,
     password_hash: str,
+    terms_accepted_at: datetime | None = None,
 ) -> User:
     user = User(
-        first_name=first_name,
-        last_name=last_name,
+        full_name=full_name,
         email=email,
+        phone=phone,
         password_hash=password_hash,
+        terms_accepted_at=terms_accepted_at or datetime.now(UTC),
     )
 
     db.add(user)
@@ -27,7 +32,7 @@ def create_user(
 
 def get_user_by_id(
     db: Session,
-    user_id: int,
+    user_id: uuid.UUID,
 ) -> User | None:
     statement = select(User).where(User.id == user_id)
 

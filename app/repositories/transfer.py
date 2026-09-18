@@ -1,24 +1,31 @@
+import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Transfer
+from app.models import Transfer, TransferStatus
 
 
 def create_transfer(
     db: Session,
-    sender_account_id: int,
-    receiver_account_id: int,
+    sender_account_id: uuid.UUID,
+    receiver_account_id: uuid.UUID,
     amount: Decimal,
     reference: str,
-    status: str = "completed",
+    currency: str = "NGN",
+    idempotency_key: str | None = None,
+    note: str | None = None,
+    status: TransferStatus = TransferStatus.SUCCESS,
 ) -> Transfer:
     transfer = Transfer(
         sender_account_id=sender_account_id,
         receiver_account_id=receiver_account_id,
         amount=amount,
+        currency=currency,
         reference=reference,
+        idempotency_key=idempotency_key or f"repo-{uuid.uuid4()}",
+        note=note,
         status=status,
     )
 
@@ -31,7 +38,7 @@ def create_transfer(
 
 def get_transfer_by_id(
     db: Session,
-    transfer_id: int,
+    transfer_id: uuid.UUID,
 ) -> Transfer | None:
     statement = select(Transfer).where(
         Transfer.id == transfer_id
@@ -53,7 +60,7 @@ def get_transfer_by_reference(
 
 def get_transfers_by_account_id(
     db: Session,
-    account_id: int,
+    account_id: uuid.UUID,
 ) -> list[Transfer]:
     statement = (
         select(Transfer)

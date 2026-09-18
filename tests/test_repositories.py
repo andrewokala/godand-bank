@@ -14,9 +14,9 @@ def test_user_repository():
     try:
         user = create_user(
             db=db,
-            first_name="Repository",
-            last_name="Test",
+            full_name="Repository Test",
             email=email,
+            phone="+2348012345003",
             password_hash="test_hash",
         )
 
