@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.db.session import SessionLocal
@@ -18,10 +19,11 @@ def test_account_repository():
 
     try:
         user = User(
-            first_name="Account",
-            last_name="Test",
+            full_name="Account Test",
             email=email,
+            phone="+2348012399001",
             password_hash="test_hash",
+            terms_accepted_at=datetime.now(UTC),
         )
 
         db.add(user)

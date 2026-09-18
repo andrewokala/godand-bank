@@ -1,11 +1,12 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
 class AccountResponse(BaseModel):
-    id: int
+    id: UUID
     account_number: str
     balance: Decimal
     currency: str

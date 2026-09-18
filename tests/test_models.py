@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.db.session import SessionLocal
@@ -9,10 +10,11 @@ def test_create_user_and_account():
 
     try:
         user = User(
-            first_name="Test",
-            last_name="User",
+            full_name="Test User",
             email="test@godandbank.local",
+            phone="+2348012399002",
             password_hash="test_hash",
+            terms_accepted_at=datetime.now(UTC),
         )
 
         db.add(user)

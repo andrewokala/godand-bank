@@ -1,13 +1,125 @@
+from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
 from app.db.session import SessionLocal
-from app.models import Account, Transaction, Transfer, User
+from app.models import (
+    Account,
+    AccountStatus,
+    IdempotencyKey,
+    KYCStatus,
+    LedgerDirection,
+    LedgerEntry,
+    Transfer,
+    User,
+)
 from app.services.transfer import transfer
 
 
-def test_transfer_moves_money_between_accounts():
+def create_test_accounts(
+    db,
+    sender_balance=Decimal("10000.00"),
+    receiver_balance=Decimal("5000.00"),
+):
+    sender_user = User(
+        full_name="Transfer Sender",
+        email=f"sender-{uuid4().hex}@test.godandbank.local",
+        phone=f"+23480{uuid4().int % 10_000_000:07d}",
+        password_hash="test_hash",
+        kyc_status=KYCStatus.VERIFIED,
+        terms_accepted_at=datetime.now(UTC),
+    )
+
+    receiver_user = User(
+        full_name="Transfer Receiver",
+        email=f"receiver-{uuid4().hex}@test.godandbank.local",
+        phone=f"+23481{uuid4().int % 10_000_000:07d}",
+        password_hash="test_hash",
+        kyc_status=KYCStatus.VERIFIED,
+        terms_accepted_at=datetime.now(UTC),
+    )
+
+    db.add_all([sender_user, receiver_user])
+    db.flush()
+
+    sender_account = Account(
+        user_id=sender_user.id,
+        account_number=f"{uuid4().int % 10_000_000_00:010d}",
+        balance=sender_balance,
+        currency="NGN",
+        status=AccountStatus.ACTIVE,
+    )
+
+    receiver_account = Account(
+        user_id=receiver_user.id,
+        account_number=f"{uuid4().int % 10_000_000_00:010d}",
+        balance=receiver_balance,
+        currency="NGN",
+        status=AccountStatus.ACTIVE,
+    )
+
+    db.add_all([sender_account, receiver_account])
+    db.commit()
+
+    db.refresh(sender_account)
+    db.refresh(receiver_account)
+
+    return (
+        sender_user,
+        receiver_user,
+        sender_account,
+        receiver_account,
+    )
+
+
+def cleanup_accounts(db, users, *accounts):
+    account_ids = [
+        account.id
+        for account in accounts
+        if account is not None
+    ]
+
+    user_ids = [
+        user.id
+        for user in users
+        if user is not None
+    ]
+
+    if account_ids:
+        transfer_ids = [
+            transfer.id
+            for transfer in db.query(Transfer).filter(
+                (Transfer.sender_account_id.in_(account_ids))
+                | (Transfer.receiver_account_id.in_(account_ids))
+            ).all()
+        ]
+
+        if transfer_ids:
+            db.query(LedgerEntry).filter(
+                LedgerEntry.transfer_id.in_(transfer_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(Transfer).filter(
+                Transfer.id.in_(transfer_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(LedgerEntry).filter(
+            LedgerEntry.account_id.in_(account_ids)
+        ).delete(synchronize_session=False)
+
+        db.query(Account).filter(
+            Account.id.in_(account_ids)
+        ).delete(synchronize_session=False)
+
+    if user_ids:
+        db.query(IdempotencyKey).filter(
+            IdempotencyKey.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
+
+
+def test_transfer_moves_money_and_creates_ledger_entries():
     db = SessionLocal()
 
     sender_user = None
@@ -16,51 +128,21 @@ def test_transfer_moves_money_between_accounts():
     receiver_account = None
 
     try:
-        sender_user = User(
-            first_name="Sender",
-            last_name="User",
-            email="transfer-sender@test.godandbank.local",
-            password_hash="test_hash",
-        )
-
-        receiver_user = User(
-            first_name="Receiver",
-            last_name="User",
-            email="transfer-receiver@test.godandbank.local",
-            password_hash="test_hash",
-        )
-
-        db.add_all([sender_user, receiver_user])
-        db.commit()
-        db.refresh(sender_user)
-        db.refresh(receiver_user)
-
-        sender_account = Account(
-            user_id=sender_user.id,
-            account_number="1111111111",
-            balance=Decimal("10000.00"),
-            currency="NGN",
-            status="active",
-        )
-
-        receiver_account = Account(
-            user_id=receiver_user.id,
-            account_number="2222222222",
-            balance=Decimal("5000.00"),
-            currency="NGN",
-            status="active",
-        )
-
-        db.add_all([sender_account, receiver_account])
-        db.commit()
-        db.refresh(sender_account)
-        db.refresh(receiver_account)
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
 
         result = transfer(
             db=db,
-            sender_account_number="1111111111",
-            receiver_account_number="2222222222",
+            user_id=sender_user.id,
+            idempotency_key=f"transfer-{uuid4().hex}",
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
             amount=Decimal("3000.00"),
+            currency="NGN",
         )
 
         db.refresh(sender_account)
@@ -69,155 +151,123 @@ def test_transfer_moves_money_between_accounts():
         assert sender_account.balance == Decimal("7000.00")
         assert receiver_account.balance == Decimal("8000.00")
 
+        assert result.status.value == "success"
+        assert result.amount == Decimal("3000.00")
         assert result.sender_account_id == sender_account.id
         assert result.receiver_account_id == receiver_account.id
-        assert result.amount == Decimal("3000.00")
-        assert result.status == "completed"
         assert result.reference.startswith("TRF-")
 
-        sender_transaction = (
-            db.query(Transaction)
-            .filter(
-                Transaction.account_id == sender_account.id,
-                Transaction.transaction_type == "transfer_out",
-            )
-            .first()
+        entries = (
+            db.query(LedgerEntry)
+            .filter(LedgerEntry.transfer_id == result.id)
+            .all()
         )
 
-        receiver_transaction = (
-            db.query(Transaction)
-            .filter(
-                Transaction.account_id == receiver_account.id,
-                Transaction.transaction_type == "transfer_in",
-            )
-            .first()
+        assert len(entries) == 2
+
+        debit = next(
+            entry
+            for entry in entries
+            if entry.direction == LedgerDirection.DEBIT
         )
 
-        assert sender_transaction is not None
-        assert receiver_transaction is not None
+        credit = next(
+            entry
+            for entry in entries
+            if entry.direction == LedgerDirection.CREDIT
+        )
 
-        assert sender_transaction.amount == Decimal("3000.00")
-        assert receiver_transaction.amount == Decimal("3000.00")
+        assert debit.amount == Decimal("3000.00")
+        assert debit.balance_after == Decimal("7000.00")
+        assert debit.account_id == sender_account.id
 
-        assert sender_transaction.reference == f"{result.reference}-OUT"
-        assert receiver_transaction.reference == f"{result.reference}-IN"
+        assert credit.amount == Decimal("3000.00")
+        assert credit.balance_after == Decimal("8000.00")
+        assert credit.account_id == receiver_account.id
 
     finally:
-        if sender_account is not None:
-            db.query(Transaction).filter(
-                Transaction.account_id == sender_account.id
-            ).delete(synchronize_session=False)
+        db.rollback()
 
-        if receiver_account is not None:
-            db.query(Transaction).filter(
-                Transaction.account_id == receiver_account.id
-            ).delete(synchronize_session=False)
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
 
-        if sender_account is not None:
-            db.query(Transfer).filter(
-                (Transfer.sender_account_id == sender_account.id)
-                | (Transfer.receiver_account_id == sender_account.id)
-            ).delete(synchronize_session=False)
-
-        if receiver_account is not None:
-            db.query(Transfer).filter(
-                (Transfer.sender_account_id == receiver_account.id)
-                | (Transfer.receiver_account_id == receiver_account.id)
-            ).delete(synchronize_session=False)
-
-        if sender_account is not None:
-            db.delete(sender_account)
-
-        if receiver_account is not None:
-            db.delete(receiver_account)
-
-        if sender_user is not None:
+        if sender_user:
             db.delete(sender_user)
 
-        if receiver_user is not None:
+        if receiver_user:
             db.delete(receiver_user)
 
         db.commit()
         db.close()
 
 
-def test_transfer_rejects_insufficient_balance():
+def test_transfer_rolls_back_when_balance_is_insufficient():
     db = SessionLocal()
 
-    user = None
-    receiver = None
-    account = None
+    sender_user = None
+    receiver_user = None
+    sender_account = None
     receiver_account = None
 
     try:
-        user = User(
-            first_name="Sender",
-            last_name="User",
-            email="insufficient-transfer@test.godandbank.local",
-            password_hash="test_hash",
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(
+            db,
+            sender_balance=Decimal("1000.00"),
         )
 
-        receiver = User(
-            first_name="Receiver",
-            last_name="User",
-            email="insufficient-transfer-receiver@test.godandbank.local",
-            password_hash="test_hash",
-        )
-
-        db.add_all([user, receiver])
-        db.commit()
-        db.refresh(user)
-        db.refresh(receiver)
-
-        account = Account(
-            user_id=user.id,
-            account_number="3333333333",
-            balance=Decimal("1000.00"),
-            currency="NGN",
-            status="active",
-        )
-
-        receiver_account = Account(
-            user_id=receiver.id,
-            account_number="4444444444",
-            balance=Decimal("500.00"),
-            currency="NGN",
-            status="active",
-        )
-
-        db.add_all([account, receiver_account])
-        db.commit()
-
-        with pytest.raises(ValueError, match="Insufficient balance"):
+        with pytest.raises(
+            ValueError,
+            match="Insufficient balance",
+        ):
             transfer(
                 db=db,
-                sender_account_number="3333333333",
-                receiver_account_number="4444444444",
+                user_id=sender_user.id,
+                idempotency_key=f"insufficient-{uuid4().hex}",
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
                 amount=Decimal("2000.00"),
+                currency="NGN",
             )
 
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        assert sender_account.balance == Decimal("1000.00")
+        assert receiver_account.balance == Decimal("5000.00")
+
+        assert (
+            db.query(Transfer)
+            .filter(
+                Transfer.sender_account_id == sender_account.id
+            )
+            .count()
+            == 0
+        )
+
     finally:
-        if account is not None:
-            db.query(Transaction).filter(
-                Transaction.account_id == account.id
-            ).delete(synchronize_session=False)
+        db.rollback()
 
-        if receiver_account is not None:
-            db.query(Transaction).filter(
-                Transaction.account_id == receiver_account.id
-            ).delete(synchronize_session=False)
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
 
-        if account is not None:
-            db.delete(account)
+        if sender_user:
+            db.delete(sender_user)
 
-        if receiver_account is not None:
-            db.delete(receiver_account)
-
-        if user is not None:
-            db.delete(user)
-
-        if receiver is not None:
-            db.delete(receiver)
+        if receiver_user:
+            db.delete(receiver_user)
 
         db.commit()
         db.close()
@@ -226,112 +276,351 @@ def test_transfer_rejects_insufficient_balance():
 def test_transfer_rejects_zero_amount():
     db = SessionLocal()
 
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
     try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
         with pytest.raises(
             ValueError,
             match="Transfer amount must be greater than zero",
         ):
             transfer(
                 db=db,
-                sender_account_number="1111111111",
-                receiver_account_number="2222222222",
+                user_id=sender_user.id,
+                idempotency_key=f"zero-{uuid4().hex}",
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
                 amount=Decimal("0.00"),
+                currency="NGN",
             )
 
     finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
         db.close()
 
 
 def test_transfer_rejects_self_transfer():
     db = SessionLocal()
 
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
     try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
         with pytest.raises(
             ValueError,
             match="Sender and receiver accounts must be different",
         ):
             transfer(
                 db=db,
-                sender_account_number="1111111111",
-                receiver_account_number="1111111111",
+                user_id=sender_user.id,
+                idempotency_key=f"self-{uuid4().hex}",
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=sender_account.account_number,
                 amount=Decimal("100.00"),
+                currency="NGN",
             )
 
     finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
         db.close()
 
 
-def test_transfer_rejects_missing_sender():
+def test_transfer_rejects_frozen_sender():
     db = SessionLocal()
 
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
     try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        sender_account.status = AccountStatus.FROZEN
+        db.commit()
+
         with pytest.raises(
             ValueError,
-            match="Sender account not found",
+            match="Sender account is not active",
         ):
             transfer(
                 db=db,
-                sender_account_number="9999999999",
-                receiver_account_number="2222222222",
+                user_id=sender_user.id,
+                idempotency_key=f"frozen-{uuid4().hex}",
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
                 amount=Decimal("100.00"),
+                currency="NGN",
             )
 
     finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
         db.close()
 
 
-def test_transfer_rejects_missing_receiver():
+def test_transfer_rejects_currency_mismatch():
     db = SessionLocal()
 
-    user = None
-    account = None
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
 
     try:
-        user = User(
-            first_name="Sender",
-            last_name="User",
-            email="missing-receiver@test.godandbank.local",
-            password_hash="test_hash",
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        with pytest.raises(
+            ValueError,
+            match="Sender account currency does not match transfer currency",
+        ):
+            transfer(
+                db=db,
+                user_id=sender_user.id,
+                idempotency_key=f"currency-{uuid4().hex}",
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
+                amount=Decimal("100.00"),
+                currency="USD",
+            )
+
+    finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
         )
 
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        if sender_user:
+            db.delete(sender_user)
 
-        account = Account(
-            user_id=user.id,
-            account_number="5555555555",
-            balance=Decimal("5000.00"),
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
+        db.close()
+
+
+def test_transfer_returns_existing_transfer_for_duplicate_request():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
+    try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        key = f"duplicate-{uuid4().hex}"
+
+        first = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=key,
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("500.00"),
             currency="NGN",
-            status="active",
         )
 
-        db.add(account)
-        db.commit()
-        db.refresh(account)
+        second = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=key,
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("500.00"),
+            currency="NGN",
+        )
 
-        with pytest.raises(
-            ValueError,
-            match="Receiver account not found",
-        ):
-            transfer(
-                db=db,
-                sender_account_number="5555555555",
-                receiver_account_number="9999999999",
-                amount=Decimal("100.00"),
-            )
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        assert first.id == second.id
+        assert first.reference == second.reference
+
+        assert sender_account.balance == Decimal("9500.00")
+        assert receiver_account.balance == Decimal("5500.00")
+
+        assert (
+            db.query(Transfer)
+            .filter(Transfer.idempotency_key == key)
+            .count()
+            == 1
+        )
+
+        assert (
+            db.query(LedgerEntry)
+            .filter(LedgerEntry.transfer_id == first.id)
+            .count()
+            == 2
+        )
 
     finally:
-        if account is not None:
-            db.query(Transaction).filter(
-                Transaction.account_id == account.id
-            ).delete(synchronize_session=False)
+        db.rollback()
 
-            db.delete(account)
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
 
-        if user is not None:
-            db.delete(user)
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
 
         db.commit()
         db.close()
 
+
+def test_transfer_rejects_idempotency_key_conflict():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
+    try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        key = f"conflict-{uuid4().hex}"
+
+        transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=key,
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("500.00"),
+            currency="NGN",
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Idempotency key was already used with a different request",
+        ):
+            transfer(
+                db=db,
+                user_id=sender_user.id,
+                idempotency_key=key,
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
+                amount=Decimal("600.00"),
+                currency="NGN",
+            )
+
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        assert sender_account.balance == Decimal("9500.00")
+        assert receiver_account.balance == Decimal("5500.00")
+
+    finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
+        db.close()
+        
