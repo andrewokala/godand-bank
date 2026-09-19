@@ -6,6 +6,7 @@ import pytest
 
 from app.db.session import SessionLocal
 from app.models import (
+    AuditLog,
     Account,
     AccountStatus,
     IdempotencyKey,
@@ -13,6 +14,7 @@ from app.models import (
     LedgerDirection,
     LedgerEntry,
     Transfer,
+    TransferStatus,
     User,
 )
 from app.services.transfer import transfer
@@ -624,3 +626,123 @@ def test_transfer_rejects_idempotency_key_conflict():
         db.commit()
         db.close()
         
+
+def test_transfer_creates_audit_log():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender = None
+    receiver = None
+    result = None
+
+    try:
+        sender_user = User(
+            full_name="Audit Sender",
+            email=f"audit-sender-{uuid4()}@godandbank.local",
+            phone=f"+23480{uuid4().int % 10**9:09d}",
+            password_hash="test_hash",
+            kyc_status=KYCStatus.VERIFIED,
+            terms_accepted_at=datetime.now(UTC),
+        )
+
+        receiver_user = User(
+            full_name="Audit Receiver",
+            email=f"audit-receiver-{uuid4()}@godandbank.local",
+            phone=f"+23481{uuid4().int % 10**9:09d}",
+            password_hash="test_hash",
+            kyc_status=KYCStatus.VERIFIED,
+            terms_accepted_at=datetime.now(UTC),
+        )
+
+        db.add_all([sender_user, receiver_user])
+        db.flush()
+
+        sender = Account(
+            user_id=sender_user.id,
+            account_number=f"{uuid4().int % 10**10:010d}",
+            balance=Decimal("1000.00"),
+            currency="NGN",
+            status=AccountStatus.ACTIVE,
+        )
+
+        receiver = Account(
+            user_id=receiver_user.id,
+            account_number=f"{uuid4().int % 10**10:010d}",
+            balance=Decimal("500.00"),
+            currency="NGN",
+            status=AccountStatus.ACTIVE,
+        )
+
+        db.add_all([sender, receiver])
+        db.flush()
+
+        result = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=f"audit-transfer-{uuid4()}",
+            sender_account_number=sender.account_number,
+            receiver_account_number=receiver.account_number,
+            amount=Decimal("100.00"),
+            currency="NGN",
+            ip_address="192.168.1.10",
+        )
+
+        audit_log = (
+            db.query(AuditLog)
+            .filter(AuditLog.action == "transfer.created")
+            .order_by(AuditLog.created_at.desc())
+            .first()
+        )
+
+        assert result.status == TransferStatus.SUCCESS
+        assert audit_log is not None
+        assert audit_log.actor_user_id == sender_user.id
+        assert str(audit_log.ip_address) == "192.168.1.10"
+        assert audit_log.metadata_json["reference"] == result.reference
+        assert audit_log.metadata_json["amount"] == "100.00"
+        assert audit_log.metadata_json["currency"] == "NGN"
+        assert audit_log.metadata_json["status"] == "success"
+
+    finally:
+        db.rollback()
+
+        if result is not None:
+            db.query(AuditLog).filter(
+                AuditLog.metadata_json["reference"].as_string() == result.reference
+            ).delete(synchronize_session=False)
+
+            db.query(LedgerEntry).filter(
+                LedgerEntry.transfer_id == result.id
+            ).delete(synchronize_session=False)
+
+            db.query(Transfer).filter(
+                Transfer.id == result.id
+            ).delete(synchronize_session=False)
+
+        db.query(IdempotencyKey).filter(
+            IdempotencyKey.key.like("audit-transfer-%")
+        ).delete(synchronize_session=False)
+
+        if sender is not None and sender.id:
+            db.query(Account).filter(Account.id == sender.id).delete(
+                synchronize_session=False
+            )
+
+        if receiver is not None and receiver.id:
+            db.query(Account).filter(Account.id == receiver.id).delete(
+                synchronize_session=False
+            )
+
+        if sender_user is not None and sender_user.id:
+            db.query(User).filter(User.id == sender_user.id).delete(
+                synchronize_session=False
+            )
+
+        if receiver_user is not None and receiver_user.id:
+            db.query(User).filter(User.id == receiver_user.id).delete(
+                synchronize_session=False
+            )
+
+        db.commit()
+        db.close()

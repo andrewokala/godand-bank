@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     AccountStatus,
-    IdempotencyKey,
     LedgerDirection,
     LedgerEntry,
     Transfer,
@@ -18,6 +17,7 @@ from app.repositories.idempotency import (
     reserve_idempotency_key,
     store_response_snapshot,
 )
+from app.services.audit import record_audit_event
 from app.services.idempotency import build_transfer_request_hash
 from app.services.transfer_response import build_transfer_response_snapshot
 
@@ -31,6 +31,7 @@ def transfer(
     amount: Decimal,
     currency: str = "NGN",
     note: str | None = None,
+    ip_address: str | None = None,
 ) -> Transfer:
     if not idempotency_key:
         raise ValueError("Idempotency key is required.")
@@ -206,6 +207,22 @@ def transfer(
             idempotency_record,
             response_snapshot,
         )
+
+        if ip_address is not None:
+            record_audit_event(
+                db=db,
+                action="transfer.created",
+                ip_address=ip_address,
+                metadata={
+                    "reference": transfer_record.reference,
+                    "sender_account_id": str(transfer_record.sender_account_id),
+                    "receiver_account_id": str(transfer_record.receiver_account_id),
+                    "amount": str(transfer_record.amount),
+                    "currency": transfer_record.currency,
+                    "status": transfer_record.status.value,
+                },
+                actor_user_id=user_id,
+            )
 
         db.commit()
         db.refresh(transfer_record)
