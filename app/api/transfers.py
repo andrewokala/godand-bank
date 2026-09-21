@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user
@@ -12,9 +12,13 @@ from app.repositories.account import (
 )
 from app.repositories.transfer import (
     get_transfer_by_id,
-    get_transfers_by_account_id,
+    get_transfers_by_account_ids,
 )
-from app.schemas.transfer import TransferCreate, TransferResponse
+from app.schemas.transfer import (
+    TransferCreate,
+    TransferHistoryResponse,
+    TransferResponse,
+)
 from app.services.transfer import transfer
 
 
@@ -90,9 +94,18 @@ def create_transfer(
 
 @router.get(
     "",
-    response_model=list[TransferResponse],
+    response_model=TransferHistoryResponse,
 )
 def get_my_transfers(
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -101,26 +114,24 @@ def get_my_transfers(
         user_id=current_user.id,
     )
 
-    if not accounts:
-        return []
+    account_ids = [
+        account.id
+        for account in accounts
+    ]
 
-    transfers = []
-
-    for account in accounts:
-        transfers.extend(
-            get_transfers_by_account_id(
-                db=db,
-                account_id=account.id,
-            )
-        )
-
-    transfers.sort(
-        key=lambda item: item.created_at,
-        reverse=True,
+    transfers, total = get_transfers_by_account_ids(
+        db=db,
+        account_ids=account_ids,
+        limit=limit,
+        offset=offset,
     )
 
-    return transfers
-
+    return TransferHistoryResponse(
+        items=transfers,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 @router.get(
     "/{transfer_id}",
