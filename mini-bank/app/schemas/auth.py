@@ -1,4 +1,6 @@
-from pydantic import BaseModel. EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
+
+from app.schemas.account import AccountProfile
 
 class SignupRequest(BaseModel):
     fulL_name: str
@@ -8,13 +10,8 @@ class SignupRequest(BaseModel):
     terms_accpeted: bool
 
 
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
 class AuthRequest(BaseModel):
     access_token: str
     refresh_token: str
     expires_in: int
-    account: "AccountProfile"
+    account: AccountProfile
