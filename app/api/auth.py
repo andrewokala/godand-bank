@@ -26,9 +26,9 @@ def register(
     try:
         return register_user(
             db=db,
-            first_name=user_data.first_name,
-            last_name=user_data.last_name,
+            full_name=user_data.full_name,
             email=user_data.email,
+            phone=user_data.phone,
             password=user_data.password,
         )
 

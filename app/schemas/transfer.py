@@ -10,10 +10,13 @@ class TransferCreate(BaseModel):
         min_length=10,
         max_length=10,
     )
-
     amount: Decimal = Field(
         gt=0,
         decimal_places=2,
+    )
+    note: str | None = Field(
+        default=None,
+        max_length=500,
     )
 
 
@@ -28,6 +31,4 @@ class TransferResponse(BaseModel):
     status: str
     created_at: datetime
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = {"from_attributes": True}

@@ -5,17 +5,17 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class UserCreate(BaseModel):
-    first_name: str = Field(
+    full_name: str = Field(
         min_length=2,
-        max_length=100,
-    )
-
-    last_name: str = Field(
-        min_length=2,
-        max_length=100,
+        max_length=200,
     )
 
     email: EmailStr
+
+    phone: str = Field(
+        min_length=10,
+        max_length=20,
+    )
 
     password: str = Field(
         min_length=8,
@@ -25,13 +25,12 @@ class UserCreate(BaseModel):
 
 class UserResponse(BaseModel):
     id: UUID
-
-    first_name: str
-    last_name: str
+    full_name: str
     email: EmailStr
-
+    phone: str
+    kyc_status: str
+    terms_accepted_at: datetime
     created_at: datetime
-    updated_at: datetime
 
     model_config = {
         "from_attributes": True,
