@@ -11,7 +11,7 @@ class AccountResponse(BaseModel):
     balance: Decimal
     currency: str
     status: str
-    created_at: datetime
+    version: int
     updated_at: datetime
 
     model_config = {

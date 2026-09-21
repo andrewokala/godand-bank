@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from jose import jwt
 from passlib.context import CryptContext
@@ -27,7 +28,7 @@ def verify_password(
 
 
 def create_access_token(
-    user_id: int,
+    user_id: UUID,
     expires_minutes: int = 30,
 ) -> str:
     expire = datetime.now(UTC) + timedelta(

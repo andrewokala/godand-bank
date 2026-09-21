@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_current_user
 from app.db.dependencies import get_db
+from app.models import User
 from app.repositories.account import (
     create_account,
     get_account_by_id,
+    get_accounts_by_user_id,
 )
 from app.schemas.account import AccountCreate, AccountResponse
 
@@ -17,25 +23,42 @@ router = APIRouter(
 @router.post(
     "",
     response_model=AccountResponse,
-    status_code=201,
+    status_code=status.HTTP_201_CREATED,
 )
 def create_new_account(
     account_data: AccountCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    existing_account = get_account_by_id(
-        db=db,
-        account_id=0,
-    )
-
-    account = create_account(
-        db=db,
-        user_id=1,
-        account_number=account_data.account_number,
-        currency=account_data.currency,
-    )
+    try:
+        account = create_account(
+            db=db,
+            user_id=current_user.id,
+            account_number=account_data.account_number,
+            currency=account_data.currency,
+        )
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to create account.",
+        ) from error
 
     return account
+
+
+@router.get(
+    "",
+    response_model=list[AccountResponse],
+)
+def get_my_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_accounts_by_user_id(
+        db=db,
+        user_id=current_user.id,
+    )
 
 
 @router.get(
@@ -43,8 +66,9 @@ def create_new_account(
     response_model=AccountResponse,
 )
 def get_account(
-    account_id: int,
+    account_id: UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     account = get_account_by_id(
         db=db,
@@ -53,8 +77,14 @@ def get_account(
 
     if account is None:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="Account not found",
+        )
+
+    if account.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this account.",
         )
 
     return account
