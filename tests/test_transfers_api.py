@@ -409,3 +409,220 @@ def test_transfer_always_uses_authenticated_users_account_as_sender():
     assert receiver_after.balance == Decimal("600.00")
 
     db.close()
+
+def test_authenticated_user_can_list_their_transfers():
+    sender_user, sender = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    _, receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('history-list')}",
+        json={
+            "receiver_account_number": receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 201
+
+    transfer_id = response.json()["id"]
+
+    response = client.get(
+        "/transfers",
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) >= 1
+
+    transfer_ids = [item["id"] for item in data]
+
+    assert transfer_id in transfer_ids
+
+
+def test_unauthenticated_user_cannot_list_transfers():
+    response = client.get("/transfers")
+
+    assert response.status_code == 401
+
+
+def test_sender_can_get_their_transfer():
+    sender_user, sender = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    _, receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('history-detail')}",
+        json={
+            "receiver_account_number": receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 201
+
+    transfer_id = response.json()["id"]
+
+    response = client.get(
+        f"/transfers/{transfer_id}",
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == transfer_id
+    assert data["amount"] == "100.00"
+
+
+def test_receiver_can_get_the_transfer():
+    sender_user, _ = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    receiver_user, receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('receiver-history')}",
+        json={
+            "receiver_account_number": receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 201
+
+    transfer_id = response.json()["id"]
+
+    response = client.get(
+        f"/transfers/{transfer_id}",
+        headers=create_authenticated_headers(receiver_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == transfer_id
+    assert data["receiver_account_id"] == str(receiver.id)
+
+
+def test_unrelated_user_cannot_get_transfer():
+    sender_user, _ = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    _, receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    unrelated_user, _ = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('private-history')}",
+        json={
+            "receiver_account_number": receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 201
+
+    transfer_id = response.json()["id"]
+
+    response = client.get(
+        f"/transfers/{transfer_id}",
+        headers=create_authenticated_headers(unrelated_user),
+    )
+
+    assert response.status_code == 403
+
+    assert response.json()["detail"] == (
+        "You do not have access to this transfer."
+    )
+
+
+def test_nonexistent_transfer_returns_404():
+    user, _ = create_user_with_account()
+
+    fake_transfer_id = str(uuid.uuid4())
+
+    response = client.get(
+        f"/transfers/{fake_transfer_id}",
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 404
+
+    assert response.json()["detail"] == "Transfer not found."
+
+
+def test_transfer_history_is_newest_first():
+    sender_user, _ = create_user_with_account(
+        Decimal("2000.00")
+    )
+
+    _, receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    first_response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('history-order-1')}",
+        json={
+            "receiver_account_number": receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert first_response.status_code == 201
+
+    second_response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('history-order-2')}",
+        json={
+            "receiver_account_number": receiver.account_number,
+            "amount": "200.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert second_response.status_code == 201
+
+    first_id = first_response.json()["id"]
+    second_id = second_response.json()["id"]
+
+    response = client.get(
+        "/transfers",
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    transfer_ids = [item["id"] for item in data]
+
+    first_position = transfer_ids.index(first_id)
+    second_position = transfer_ids.index(second_id)
+
+    assert second_position < first_position
