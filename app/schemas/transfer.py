@@ -32,3 +32,9 @@ class TransferResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+class TransferHistoryResponse(BaseModel):
+    items: list[TransferResponse]
+    total: int
+    limit: int
+    offset: int

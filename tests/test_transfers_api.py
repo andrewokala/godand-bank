@@ -441,9 +441,12 @@ def test_authenticated_user_can_list_their_transfers():
 
     data = response.json()
 
-    assert len(data) >= 1
+    assert len(data["items"]) >= 1
 
-    transfer_ids = [item["id"] for item in data]
+    transfer_ids = [
+        item["id"]
+        for item in data["items"]
+    ]
 
     assert transfer_id in transfer_ids
 
@@ -620,9 +623,140 @@ def test_transfer_history_is_newest_first():
 
     data = response.json()
 
-    transfer_ids = [item["id"] for item in data]
+    transfer_ids = [
+        item["id"]
+        for item in data["items"]
+        ]
 
     first_position = transfer_ids.index(first_id)
     second_position = transfer_ids.index(second_id)
 
     assert second_position < first_position
+
+def test_get_my_transfers_returns_paginated_history():
+    sender_user, sender = create_user_with_account(
+        Decimal("5000.00")
+    )
+
+    _, receiver = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    headers = create_authenticated_headers(sender_user)
+
+    for index in range(3):
+        response = client.post(
+            f"/transfers?idempotency_key={make_idempotency_key(f'pagination-{index}')}",
+            json={
+                "receiver_account_number": receiver.account_number,
+                "amount": "100.00",
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 201
+
+    response = client.get(
+        "/transfers?limit=2&offset=0",
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data["items"]) == 2
+    assert data["total"] == 3
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+
+
+def test_get_my_transfers_returns_next_page():
+    sender_user, sender = create_user_with_account(
+        Decimal("5000.00")
+    )
+
+    _, receiver = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    headers = create_authenticated_headers(sender_user)
+
+    created_transfer_ids = []
+
+    for index in range(3):
+        response = client.post(
+            f"/transfers?idempotency_key={make_idempotency_key(f'pagination-next-{index}')}",
+            json={
+                "receiver_account_number": receiver.account_number,
+                "amount": "100.00",
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 201
+        created_transfer_ids.append(response.json()["id"])
+
+    first_page = client.get(
+        "/transfers?limit=2&offset=0",
+        headers=headers,
+    )
+
+    second_page = client.get(
+        "/transfers?limit=2&offset=2",
+        headers=headers,
+    )
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+
+    first_data = first_page.json()
+    second_data = second_page.json()
+
+    assert len(first_data["items"]) == 2
+    assert len(second_data["items"]) == 1
+
+    first_ids = {
+        item["id"]
+        for item in first_data["items"]
+    }
+
+    second_ids = {
+        item["id"]
+        for item in second_data["items"]
+    }
+
+    assert first_ids.isdisjoint(second_ids)
+
+    returned_ids = first_ids | second_ids
+
+    assert returned_ids == set(created_transfer_ids)
+
+    assert second_data["total"] == 3
+    assert second_data["limit"] == 2
+    assert second_data["offset"] == 2
+
+
+def test_get_my_transfers_rejects_invalid_pagination():
+    user, _ = create_user_with_account()
+
+    headers = create_authenticated_headers(user)
+
+    negative_limit = client.get(
+        "/transfers?limit=0",
+        headers=headers,
+    )
+
+    oversized_limit = client.get(
+        "/transfers?limit=101",
+        headers=headers,
+    )
+
+    negative_offset = client.get(
+        "/transfers?offset=-1",
+        headers=headers,
+    )
+
+    assert negative_limit.status_code == 422
+    assert oversized_limit.status_code == 422
+    assert negative_offset.status_code == 422

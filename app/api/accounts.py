@@ -13,6 +13,11 @@ from app.repositories.account import (
     get_accounts_by_user_id,
 )
 from app.schemas.account import AccountCreate, AccountResponse
+from app.repositories.ledger_entry import (
+    get_ledger_entries_by_account_id,
+)
+
+from app.schemas.ledger import LedgerEntryResponse
 
 router = APIRouter(
     prefix="/accounts",
@@ -88,3 +93,34 @@ def get_account(
         )
 
     return account
+
+@router.get(
+    "/{account_id}/ledger",
+    response_model=list[LedgerEntryResponse],
+)
+def get_account_ledger(
+    account_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    account = get_account_by_id(
+        db=db,
+        account_id=account_id,
+    )
+
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found",
+        )
+
+    if account.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this account.",
+        )
+
+    return get_ledger_entries_by_account_id(
+        db=db,
+        account_id=account.id,
+    )
