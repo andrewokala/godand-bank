@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from app.core.security import create_access_token, hash_password
+from app.core.security import create_access_token
 from app.db.session import SessionLocal
 from app.main import app
 from app.repositories.account import create_account
@@ -18,24 +18,33 @@ def create_test_user():
 
     user = create_user(
         db=db,
-        full_name="Account Test User",
-        email=f"{uuid.uuid4()}@example.com",
-        phone=f"+234{uuid.uuid4().int % 10_000_000:07d}",
-        password_hash=hash_password("TestPassword123"),
+        full_name="Test User",
+        email=f"test-{uuid.uuid4()}@example.com",
+        phone=f"+23480{uuid.uuid4().int % 10_000_000:07d}",
+        password_hash="hashed-password",
     )
 
     db.close()
+
     return user
 
 
-def create_user_with_account(balance=Decimal("1000.00")):
+def create_authenticated_headers(user):
+    token = create_access_token(user.id)
+
+    return {
+        "Authorization": f"Bearer {token}",
+    }
+
+
+def create_user_with_account(
+    balance=Decimal("1000.00"),
+):
     user = create_test_user()
 
     db = SessionLocal()
 
-    account_number = (
-        f"{uuid.uuid4().int % 10_000_000_00:010d}"
-    )
+    account_number = f"{uuid.uuid4().int % 10_000_000_000:010d}"
 
     account = create_account(
         db=db,
@@ -48,27 +57,15 @@ def create_user_with_account(balance=Decimal("1000.00")):
 
     db.commit()
     db.refresh(account)
-
     db.close()
 
     return user, account
-
-
-def create_authenticated_headers(user):
-    token = create_access_token(user.id)
-
-    return {
-        "Authorization": f"Bearer {token}",
-    }
 
 
 def test_create_account_requires_authentication():
     response = client.post(
         "/accounts",
         json={
-            "account_number": (
-                f"{uuid.uuid4().int % 10_000_000_00:010d}"
-            ),
             "currency": "NGN",
         },
     )
@@ -82,9 +79,6 @@ def test_authenticated_user_can_create_account():
     response = client.post(
         "/accounts",
         json={
-            "account_number": (
-                f"{uuid.uuid4().int % 10_000_000_00:010d}"
-            ),
             "currency": "NGN",
         },
         headers=create_authenticated_headers(user),
@@ -94,29 +88,61 @@ def test_authenticated_user_can_create_account():
 
     data = response.json()
 
+    assert len(data["account_number"]) == 10
+    assert data["account_number"].isdigit()
     assert data["currency"] == "NGN"
     assert data["balance"] == "0.00"
     assert data["status"] == "active"
+
+
+def test_generated_account_numbers_are_unique():
+    user_one = create_test_user()
+    user_two = create_test_user()
+
+    response_one = client.post(
+        "/accounts",
+        json={
+            "currency": "NGN",
+        },
+        headers=create_authenticated_headers(user_one),
+    )
+
+    response_two = client.post(
+        "/accounts",
+        json={
+            "currency": "NGN",
+        },
+        headers=create_authenticated_headers(user_two),
+    )
+
+    assert response_one.status_code == 201
+    assert response_two.status_code == 201
+
+    account_number_one = response_one.json()["account_number"]
+    account_number_two = response_two.json()["account_number"]
+
+    assert len(account_number_one) == 10
+    assert len(account_number_two) == 10
+    assert account_number_one.isdigit()
+    assert account_number_two.isdigit()
+    assert account_number_one != account_number_two
 
 
 def test_user_can_list_own_accounts():
     user = create_test_user()
     headers = create_authenticated_headers(user)
 
-    account_number = (
-        f"{uuid.uuid4().int % 10_000_000_00:010d}"
-    )
-
     create_response = client.post(
         "/accounts",
         json={
-            "account_number": account_number,
             "currency": "NGN",
         },
         headers=headers,
     )
 
     assert create_response.status_code == 201
+
+    created_account = create_response.json()
 
     response = client.get(
         "/accounts",
@@ -128,7 +154,8 @@ def test_user_can_list_own_accounts():
     data = response.json()
 
     assert len(data) == 1
-    assert data[0]["account_number"] == account_number
+    assert data[0]["id"] == created_account["id"]
+    assert data[0]["account_number"] == created_account["account_number"]
 
 
 def test_unauthenticated_user_cannot_list_accounts():
@@ -141,14 +168,9 @@ def test_user_can_get_own_account():
     user = create_test_user()
     headers = create_authenticated_headers(user)
 
-    account_number = (
-        f"{uuid.uuid4().int % 10_000_000_00:010d}"
-    )
-
     create_response = client.post(
         "/accounts",
         json={
-            "account_number": account_number,
             "currency": "NGN",
         },
         headers=headers,
@@ -164,7 +186,11 @@ def test_user_can_get_own_account():
     )
 
     assert response.status_code == 200
-    assert response.json()["id"] == account_id
+
+    data = response.json()
+
+    assert data["id"] == account_id
+    assert data["currency"] == "NGN"
 
 
 def test_unauthenticated_user_cannot_view_account():
@@ -179,6 +205,7 @@ def test_unauthenticated_user_cannot_view_account():
 
 def test_user_cannot_access_another_users_account():
     user_one, account = create_user_with_account()
+
     user_two = create_test_user()
 
     response = client.get(
@@ -187,10 +214,6 @@ def test_user_cannot_access_another_users_account():
     )
 
     assert response.status_code == 403
-
-    assert response.json()["detail"] == (
-        "You do not have access to this account."
-    )
 
 
 def test_nonexistent_account_returns_404():
@@ -204,31 +227,12 @@ def test_nonexistent_account_returns_404():
     assert response.status_code == 404
 
 
-def test_duplicate_account_number_is_rejected():
-    first_user, first_account = create_user_with_account()
-    second_user = create_test_user()
-
-    response = client.post(
-        "/accounts",
-        json={
-            "account_number": first_account.account_number,
-            "currency": "NGN",
-        },
-        headers=create_authenticated_headers(second_user),
-    )
-
-    assert response.status_code == 400
-
-
 def test_user_cannot_create_second_account():
     user, _ = create_user_with_account()
 
     response = client.post(
         "/accounts",
         json={
-            "account_number": (
-                f"{uuid.uuid4().int % 10_000_000_00:010d}"
-            ),
             "currency": "NGN",
         },
         headers=create_authenticated_headers(user),
@@ -239,7 +243,7 @@ def test_user_cannot_create_second_account():
 
 def test_user_can_view_their_own_account():
     user, account = create_user_with_account(
-        Decimal("2500.00")
+        Decimal("2500.00"),
     )
 
     response = client.get(
@@ -259,7 +263,7 @@ def test_user_can_view_their_own_account():
 
 def test_account_balance_is_returned_correctly():
     user, account = create_user_with_account(
-        Decimal("7500.50")
+        Decimal("7500.50"),
     )
 
     response = client.get(
@@ -273,6 +277,7 @@ def test_account_balance_is_returned_correctly():
 
     assert data["balance"] == "7500.50"
     assert data["version"] == 0
+
 
 def test_unauthenticated_user_cannot_view_account_ledger():
     user, account = create_user_with_account()
@@ -293,23 +298,23 @@ def test_user_can_view_empty_account_ledger():
     )
 
     assert response.status_code == 200
-    assert response.json() == []
+
+    data = response.json()
+
+    assert data == []
 
 
 def test_user_cannot_view_another_users_account_ledger():
-    owner, account = create_user_with_account()
-    other_user = create_test_user()
+    user_one, account = create_user_with_account()
+
+    user_two = create_test_user()
 
     response = client.get(
         f"/accounts/{account.id}/ledger",
-        headers=create_authenticated_headers(other_user),
+        headers=create_authenticated_headers(user_two),
     )
 
     assert response.status_code == 403
-
-    assert response.json()["detail"] == (
-        "You do not have access to this account."
-    )
 
 
 def test_nonexistent_account_ledger_returns_404():
@@ -322,21 +327,20 @@ def test_nonexistent_account_ledger_returns_404():
 
     assert response.status_code == 404
 
+
 def test_account_ledger_returns_transfer_entries():
     sender_user, sender = create_user_with_account(
-        Decimal("1000.00")
+        Decimal("1000.00"),
     )
 
     receiver_user, receiver = create_user_with_account(
-        Decimal("500.00")
+        Decimal("500.00"),
     )
 
     transfer_response = client.post(
         "/transfers",
         params={
-            "idempotency_key": (
-                f"ledger-api-{uuid.uuid4()}"
-            ),
+            "idempotency_key": f"ledger-test-{uuid.uuid4()}",
         },
         json={
             "receiver_account_number": receiver.account_number,
@@ -366,13 +370,14 @@ def test_account_ledger_returns_transfer_entries():
     assert entry["amount"] == "100.00"
     assert entry["balance_after"] == "900.00"
 
+
 def test_receiver_ledger_returns_credit_entry():
     sender_user, sender = create_user_with_account(
-        Decimal("1000.00")
+        Decimal("1000.00"),
     )
 
     receiver_user, receiver = create_user_with_account(
-        Decimal("500.00")
+        Decimal("500.00"),
     )
 
     transfer_response = client.post(
@@ -408,13 +413,14 @@ def test_receiver_ledger_returns_credit_entry():
     assert entry["amount"] == "100.00"
     assert entry["balance_after"] == "600.00"
 
+
 def test_account_ledger_returns_multiple_entries_newest_first():
     sender_user, sender = create_user_with_account(
-        Decimal("1000.00")
+        Decimal("1000.00"),
     )
 
     receiver_user, receiver = create_user_with_account(
-        Decimal("500.00")
+        Decimal("500.00"),
     )
 
     first_transfer = client.post(

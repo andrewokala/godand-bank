@@ -70,28 +70,16 @@ def test_user_response_does_not_expose_password_hash():
 
 def test_account_create_accepts_valid_data():
     account = AccountCreate(
-        account_number="1234567890",
         currency="NGN",
     )
 
-    assert account.account_number == "1234567890"
     assert account.currency == "NGN"
 
 
 def test_account_create_uses_ngn_by_default():
-    account = AccountCreate(
-        account_number="1234567890",
-    )
+    account = AccountCreate()
 
     assert account.currency == "NGN"
-
-
-def test_account_create_rejects_invalid_account_number():
-    with pytest.raises(ValidationError):
-        AccountCreate(
-            account_number="12345",
-            currency="NGN",
-        )
 
 
 def test_account_response_accepts_uuid_and_decimal_balance():

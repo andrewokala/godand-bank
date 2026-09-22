@@ -9,6 +9,7 @@ from app.db.dependencies import get_db
 from app.models import User
 from app.repositories.account import (
     create_account,
+    generate_account_number,
     get_account_by_id,
     get_accounts_by_user_id,
 )
@@ -35,11 +36,13 @@ def create_new_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    account_number = generate_account_number(db)
+
     try:
         account = create_account(
             db=db,
             user_id=current_user.id,
-            account_number=account_data.account_number,
+            account_number=account_number,
             currency=account_data.currency,
         )
     except IntegrityError as error:
