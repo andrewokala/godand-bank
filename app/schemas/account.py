@@ -20,11 +20,6 @@ class AccountResponse(BaseModel):
 
 
 class AccountCreate(BaseModel):
-    account_number: str = Field(
-        min_length=10,
-        max_length=10,
-    )
-
     currency: str = Field(
         default="NGN",
         min_length=3,
