@@ -16,3 +16,9 @@ class AuditLogResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True,
     )
+
+class AuditLogListResponse(BaseModel):
+    items: list[AuditLogResponse]
+    total: int
+    limit: int
+    offset: int

@@ -50,8 +50,12 @@ def test_authenticated_user_with_no_audit_logs_gets_empty_list():
     )
 
     assert response.status_code == 200
-    assert response.json() == []
+    data = response.json()
 
+    assert data["items"] == []
+    assert data["total"] == 0
+    assert data["limit"] == 20
+    assert data["offset"] == 0
 
 def test_user_can_view_own_audit_logs():
     user = create_test_user()
@@ -81,12 +85,15 @@ def test_user_can_view_own_audit_logs():
 
     data = response.json()
 
-    assert len(data) == 1
-    assert data[0]["actor_user_id"] == str(user.id)
-    assert data[0]["action"] == "profile.updated"
-    assert data[0]["ip_address"] == "127.0.0.1"
-    assert data[0]["metadata_json"]["source"] == "test"
+    assert data["total"] == 1
+    assert data["limit"] == 20
+    assert data["offset"] == 0
 
+    assert len(data["items"]) == 1
+    assert data["items"][0]["actor_user_id"] == str(user.id)
+    assert data["items"][0]["action"] == "profile.updated"
+    assert data["items"][0]["ip_address"] == "127.0.0.1"
+    assert data["items"][0]["metadata_json"]["source"] == "test"
 
 def test_user_cannot_view_another_users_audit_logs():
     user_a = create_test_user()
@@ -116,4 +123,105 @@ def test_user_cannot_view_another_users_audit_logs():
 
     data = response.json()
 
-    assert data == []
+    assert data["items"] == []
+    assert data["total"] == 0
+
+def test_audit_logs_pagination():
+    user = create_test_user()
+
+    db = SessionLocal()
+
+    for index in range(5):
+        create_audit_log(
+            db=db,
+            actor_user_id=user.id,
+            action=f"test.action.{index}",
+            ip_address="127.0.0.1",
+            metadata_json={
+                "index": index,
+            },
+        )
+
+    db.commit()
+    db.close()
+
+    response = client.get(
+        "/audit-logs?limit=2&offset=0",
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["total"] == 5
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+    assert len(data["items"]) == 2
+
+
+def test_audit_logs_pagination_offset():
+    user = create_test_user()
+
+    db = SessionLocal()
+
+    for index in range(5):
+        create_audit_log(
+            db=db,
+            actor_user_id=user.id,
+            action=f"test.action.{index}",
+            ip_address="127.0.0.1",
+            metadata_json={
+                "index": index,
+            },
+        )
+
+    db.commit()
+    db.close()
+
+    response = client.get(
+        "/audit-logs?limit=2&offset=2",
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["total"] == 5
+    assert data["limit"] == 2
+    assert data["offset"] == 2
+    assert len(data["items"]) == 2
+
+
+def test_audit_logs_limit_cannot_exceed_100():
+    user = create_test_user()
+
+    response = client.get(
+        "/audit-logs?limit=101",
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 422
+
+
+def test_audit_logs_limit_must_be_positive():
+    user = create_test_user()
+
+    response = client.get(
+        "/audit-logs?limit=0",
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 422
+
+
+def test_audit_logs_offset_cannot_be_negative():
+    user = create_test_user()
+
+    response = client.get(
+        "/audit-logs?offset=-1",
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 422
