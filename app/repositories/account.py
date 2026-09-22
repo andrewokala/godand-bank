@@ -1,9 +1,21 @@
+import secrets
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Account
+
+
+def generate_account_number(db: Session) -> str:
+    while True:
+        account_number = f"{secrets.randbelow(10_000_000_000):010d}"
+
+        if get_account_by_number(
+            db=db,
+            account_number=account_number,
+        ) is None:
+            return account_number
 
 
 def create_account(
