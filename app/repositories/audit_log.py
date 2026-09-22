@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog
@@ -30,14 +30,29 @@ def create_audit_log(
 def get_audit_logs_by_actor_user_id(
     db: Session,
     actor_user_id: uuid.UUID,
-) -> list[AuditLog]:
+    limit: int,
+    offset: int,
+) -> tuple[list[AuditLog], int]:
+    base_statement = select(AuditLog).where(
+        AuditLog.actor_user_id == actor_user_id
+    )
+
+    total = db.scalar(
+        select(func.count()).select_from(
+            base_statement.subquery()
+        )
+    )
+
     statement = (
-        select(AuditLog)
-        .where(AuditLog.actor_user_id == actor_user_id)
+        base_statement
         .order_by(
             AuditLog.created_at.desc(),
             AuditLog.id.desc(),
         )
+        .limit(limit)
+        .offset(offset)
     )
 
-    return list(db.scalars(statement).all())
+    logs = list(db.scalars(statement).all())
+
+    return logs, total or 0
