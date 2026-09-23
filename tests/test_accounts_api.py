@@ -343,6 +343,7 @@ def test_account_ledger_returns_transfer_entries():
             "idempotency_key": f"ledger-test-{uuid.uuid4()}",
         },
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -386,6 +387,7 @@ def test_receiver_ledger_returns_credit_entry():
             "idempotency_key": f"receiver-ledger-{uuid.uuid4()}",
         },
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -429,6 +431,7 @@ def test_account_ledger_returns_multiple_entries_newest_first():
             "idempotency_key": f"ledger-order-1-{uuid.uuid4()}",
         },
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -443,6 +446,7 @@ def test_account_ledger_returns_multiple_entries_newest_first():
             "idempotency_key": f"ledger-order-2-{uuid.uuid4()}",
         },
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "50.00",
         },
