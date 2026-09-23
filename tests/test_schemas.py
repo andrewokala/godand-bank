@@ -103,10 +103,12 @@ def test_account_response_accepts_uuid_and_decimal_balance():
 
 def test_transfer_create_accepts_valid_data():
     transfer = TransferCreate(
+        sender_account_number="1234567890",
         receiver_account_number="9876543210",
         amount=Decimal("2500.00"),
     )
 
+    assert transfer.sender_account_number == "1234567890"
     assert transfer.receiver_account_number == "9876543210"
     assert transfer.amount == Decimal("2500.00")
 
