@@ -98,6 +98,7 @@ def test_successful_transfer_updates_balances():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('successful')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -132,6 +133,7 @@ def test_successful_transfer_creates_two_ledger_entries():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('ledger')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -183,11 +185,12 @@ def test_successful_transfer_creates_two_ledger_entries():
 
 
 def test_invalid_receiver_returns_404():
-    sender_user, _ = create_user_with_account()
+    sender_user, sender = create_user_with_account()
 
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('invalid-receiver')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": "9999999999",
             "amount": "100.00",
         },
@@ -198,7 +201,7 @@ def test_invalid_receiver_returns_404():
 
 
 def test_insufficient_balance():
-    sender_user, _ = create_user_with_account(
+    sender_user, sender = create_user_with_account(
         Decimal("50.00")
     )
 
@@ -209,6 +212,7 @@ def test_insufficient_balance():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('insufficient')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -227,6 +231,7 @@ def test_self_transfer_is_rejected():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('self-transfer')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": sender.account_number,
             "amount": "100.00",
         },
@@ -263,6 +268,7 @@ def test_inactive_sender_is_rejected():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('inactive')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -284,6 +290,7 @@ def test_duplicate_idempotency_key_returns_same_transfer():
     idempotency_key = make_idempotency_key("duplicate")
 
     payload = {
+        "sender_account_number": sender.account_number,
         "receiver_account_number": receiver.account_number,
         "amount": "100.00",
     }
@@ -333,7 +340,7 @@ def test_duplicate_idempotency_key_returns_same_transfer():
 
 
 def test_idempotency_key_with_different_request_is_rejected():
-    sender_user, _ = create_user_with_account(
+    sender_user, sender = create_user_with_account(
         Decimal("1000.00")
     )
 
@@ -346,6 +353,7 @@ def test_idempotency_key_with_different_request_is_rejected():
     first_response = client.post(
         f"/transfers?idempotency_key={idempotency_key}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -355,6 +363,7 @@ def test_idempotency_key_with_different_request_is_rejected():
     second_response = client.post(
         f"/transfers?idempotency_key={idempotency_key}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "200.00",
         },
@@ -369,8 +378,8 @@ def test_idempotency_key_with_different_request_is_rejected():
     )
 
 
-def test_transfer_always_uses_authenticated_users_account_as_sender():
-    victim_user, victim = create_user_with_account(
+def test_user_cannot_transfer_from_another_users_account():
+    _, victim = create_user_with_account(
         Decimal("1000.00")
     )
 
@@ -383,20 +392,19 @@ def test_transfer_always_uses_authenticated_users_account_as_sender():
     )
 
     response = client.post(
-        f"/transfers?idempotency_key={make_idempotency_key('authenticated-sender')}",
+        f"/transfers?idempotency_key={make_idempotency_key('unauthorized-sender')}",
         json={
+            "sender_account_number": victim.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
         headers=create_authenticated_headers(attacker_user),
     )
 
-    assert response.status_code == 201
-
-    data = response.json()
-
-    assert data["sender_account_id"] == str(attacker.id)
-    assert data["receiver_account_id"] == str(receiver.id)
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "You do not have access to this sender account."
+    )
 
     db = SessionLocal()
 
@@ -405,8 +413,16 @@ def test_transfer_always_uses_authenticated_users_account_as_sender():
     receiver_after = db.get(Account, receiver.id)
 
     assert victim_after.balance == Decimal("1000.00")
-    assert attacker_after.balance == Decimal("900.00")
-    assert receiver_after.balance == Decimal("600.00")
+    assert attacker_after.balance == Decimal("1000.00")
+    assert receiver_after.balance == Decimal("500.00")
+
+    transfer = db.scalar(
+        select(Transfer).where(
+            Transfer.sender_account_id == victim.id
+        )
+    )
+
+    assert transfer is None
 
     db.close()
 
@@ -422,6 +438,7 @@ def test_authenticated_user_can_list_their_transfers():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('history-list')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -469,6 +486,7 @@ def test_sender_can_get_their_transfer():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('history-detail')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -493,7 +511,7 @@ def test_sender_can_get_their_transfer():
 
 
 def test_receiver_can_get_the_transfer():
-    sender_user, _ = create_user_with_account(
+    sender_user, sender = create_user_with_account(
         Decimal("1000.00")
     )
 
@@ -504,6 +522,7 @@ def test_receiver_can_get_the_transfer():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('receiver-history')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -528,7 +547,7 @@ def test_receiver_can_get_the_transfer():
 
 
 def test_unrelated_user_cannot_get_transfer():
-    sender_user, _ = create_user_with_account(
+    sender_user, sender = create_user_with_account(
         Decimal("1000.00")
     )
 
@@ -543,6 +562,7 @@ def test_unrelated_user_cannot_get_transfer():
     response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('private-history')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -581,7 +601,7 @@ def test_nonexistent_transfer_returns_404():
 
 
 def test_transfer_history_is_newest_first():
-    sender_user, _ = create_user_with_account(
+    sender_user, sender = create_user_with_account(
         Decimal("2000.00")
     )
 
@@ -592,6 +612,7 @@ def test_transfer_history_is_newest_first():
     first_response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('history-order-1')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "100.00",
         },
@@ -603,6 +624,7 @@ def test_transfer_history_is_newest_first():
     second_response = client.post(
         f"/transfers?idempotency_key={make_idempotency_key('history-order-2')}",
         json={
+            "sender_account_number": sender.account_number,
             "receiver_account_number": receiver.account_number,
             "amount": "200.00",
         },
@@ -648,6 +670,7 @@ def test_get_my_transfers_returns_paginated_history():
         response = client.post(
             f"/transfers?idempotency_key={make_idempotency_key(f'pagination-{index}')}",
             json={
+                "sender_account_number": sender.account_number,
                 "receiver_account_number": receiver.account_number,
                 "amount": "100.00",
             },
@@ -688,6 +711,7 @@ def test_get_my_transfers_returns_next_page():
         response = client.post(
             f"/transfers?idempotency_key={make_idempotency_key(f'pagination-next-{index}')}",
             json={
+                "sender_account_number": sender.account_number,
                 "receiver_account_number": receiver.account_number,
                 "amount": "100.00",
             },
