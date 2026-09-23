@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,7 +18,7 @@ from app.repositories.ledger_entry import (
     get_ledger_entries_by_account_id,
 )
 
-from app.schemas.ledger import LedgerEntryResponse
+from app.schemas.ledger import LedgerEntryListResponse
 
 router = APIRouter(
     prefix="/accounts",
@@ -99,10 +99,19 @@ def get_account(
 
 @router.get(
     "/{account_id}/ledger",
-    response_model=list[LedgerEntryResponse],
+    response_model=LedgerEntryListResponse,
 )
 def get_account_ledger(
     account_id: UUID,
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -123,7 +132,16 @@ def get_account_ledger(
             detail="You do not have access to this account.",
         )
 
-    return get_ledger_entries_by_account_id(
+    entries, total = get_ledger_entries_by_account_id(
         db=db,
         account_id=account.id,
+        limit=limit,
+        offset=offset,
     )
+
+    return {
+        "items": entries,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

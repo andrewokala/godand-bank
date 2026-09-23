@@ -301,7 +301,10 @@ def test_user_can_view_empty_account_ledger():
 
     data = response.json()
 
-    assert data == []
+    assert data["items"] == []
+    assert data["total"] == 0
+    assert data["limit"] == 20
+    assert data["offset"] == 0
 
 
 def test_user_cannot_view_another_users_account_ledger():
@@ -361,9 +364,12 @@ def test_account_ledger_returns_transfer_entries():
 
     data = response.json()
 
-    assert len(data) == 1
+    assert data["total"] == 1
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert len(data["items"]) == 1
 
-    entry = data[0]
+    entry = data["items"][0]
 
     assert entry["account_id"] == str(sender.id)
     assert entry["transfer_id"] == transfer_response.json()["id"]
@@ -405,9 +411,12 @@ def test_receiver_ledger_returns_credit_entry():
 
     data = response.json()
 
-    assert len(data) == 1
+    assert data["total"] == 1
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert len(data["items"]) == 1
 
-    entry = data[0]
+    entry = data["items"][0]
 
     assert entry["account_id"] == str(receiver.id)
     assert entry["transfer_id"] == transfer_response.json()["id"]
@@ -464,15 +473,119 @@ def test_account_ledger_returns_multiple_entries_newest_first():
 
     data = response.json()
 
-    assert len(data) == 2
+    assert data["total"] == 2
+    assert data["limit"] == 20
+    assert data["offset"] == 0
+    assert len(data["items"]) == 2
 
     # Newest ledger entry should come first.
-    assert data[0]["transfer_id"] == second_transfer.json()["id"]
-    assert data[0]["direction"] == "debit"
-    assert data[0]["amount"] == "50.00"
-    assert data[0]["balance_after"] == "850.00"
+    assert data["items"][0]["transfer_id"] == second_transfer.json()["id"]
+    assert data["items"][0]["direction"] == "debit"
+    assert data["items"][0]["amount"] == "50.00"
+    assert data["items"][0]["balance_after"] == "850.00"
 
-    assert data[1]["transfer_id"] == first_transfer.json()["id"]
-    assert data[1]["direction"] == "debit"
-    assert data[1]["amount"] == "100.00"
-    assert data[1]["balance_after"] == "900.00"
+    assert data["items"][1]["transfer_id"] == first_transfer.json()["id"]
+    assert data["items"][1]["direction"] == "debit"
+    assert data["items"][1]["amount"] == "100.00"
+    assert data["items"][1]["balance_after"] == "900.00"
+
+
+def test_account_ledger_supports_pagination():
+    sender_user, sender = create_user_with_account(
+        Decimal("1000.00"),
+    )
+
+    receiver_user, receiver = create_user_with_account(
+        Decimal("500.00"),
+    )
+
+    first_transfer = client.post(
+        "/transfers",
+        params={
+            "idempotency_key": f"ledger-pagination-1-{uuid.uuid4()}",
+        },
+        json={
+            "sender_account_number": sender.account_number,
+            "receiver_account_number": receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert first_transfer.status_code == 201
+
+    second_transfer = client.post(
+        "/transfers",
+        params={
+            "idempotency_key": f"ledger-pagination-2-{uuid.uuid4()}",
+        },
+        json={
+            "sender_account_number": sender.account_number,
+            "receiver_account_number": receiver.account_number,
+            "amount": "50.00",
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert second_transfer.status_code == 201
+
+    response = client.get(
+        f"/accounts/{sender.id}/ledger",
+        params={
+            "limit": 1,
+            "offset": 1,
+        },
+        headers=create_authenticated_headers(sender_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["total"] == 2
+    assert data["limit"] == 1
+    assert data["offset"] == 1
+    assert len(data["items"]) == 1
+
+    entry = data["items"][0]
+
+    assert entry["transfer_id"] == first_transfer.json()["id"]
+    assert entry["direction"] == "debit"
+    assert entry["amount"] == "100.00"
+    assert entry["balance_after"] == "900.00"
+
+
+def test_account_ledger_limit_cannot_exceed_100():
+    user, account = create_user_with_account()
+
+    response = client.get(
+        f"/accounts/{account.id}/ledger",
+        params={"limit": 101},
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 422
+
+
+def test_account_ledger_limit_must_be_positive():
+    user, account = create_user_with_account()
+
+    response = client.get(
+        f"/accounts/{account.id}/ledger",
+        params={"limit": 0},
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 422
+
+
+def test_account_ledger_offset_cannot_be_negative():
+    user, account = create_user_with_account()
+
+    response = client.get(
+        f"/accounts/{account.id}/ledger",
+        params={"offset": -1},
+        headers=create_authenticated_headers(user),
+    )
+
+    assert response.status_code == 422
