@@ -13,6 +13,24 @@ from app.repositories.transfer import (
 )
 
 
+def test_get_transfers_by_account_ids_returns_empty_for_no_accounts():
+    db = SessionLocal()
+
+    try:
+        transfers, total = get_transfers_by_account_ids(
+            db=db,
+            account_ids=[],
+            limit=20,
+            offset=0,
+        )
+
+        assert transfers == []
+        assert total == 0
+
+    finally:
+        db.close()
+
+
 def test_get_transfers_by_account_ids_filters_and_paginates():
     db = SessionLocal()
 
