@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 
 class TransferCreate(BaseModel):
+    sender_account_number: str = Field(
+        min_length=10,
+        max_length=10,
+    )
     receiver_account_number: str = Field(
         min_length=10,
         max_length=10,

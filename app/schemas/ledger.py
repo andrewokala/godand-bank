@@ -19,3 +19,10 @@ class LedgerEntryResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True,
     )
+
+
+class LedgerEntryListResponse(BaseModel):
+    items: list[LedgerEntryResponse]
+    total: int
+    limit: int
+    offset: int

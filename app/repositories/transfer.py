@@ -73,6 +73,7 @@ def get_transfers_by_account_id(
 
     return list(db.scalars(statement).all())
 
+
 def get_transfers_by_account_ids(
     db: Session,
     account_ids: list[uuid.UUID],
