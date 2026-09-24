@@ -39,18 +39,22 @@ def create_transfer(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    accounts = get_accounts_by_user_id(
+    sender = get_account_by_number(
         db=db,
-        user_id=current_user.id,
+        account_number=transfer_data.sender_account_number,
     )
 
-    if not accounts:
+    if sender is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sender account not found.",
         )
 
-    sender = accounts[0]
+    if sender.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this sender account.",
+        )
 
     receiver = get_account_by_number(
         db=db,
