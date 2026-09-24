@@ -468,6 +468,68 @@ def test_authenticated_user_can_list_their_transfers():
     assert transfer_id in transfer_ids
 
 
+def test_user_cannot_see_another_users_transfers_in_history():
+    first_user, first_sender = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    _, first_receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    second_user, second_sender = create_user_with_account(
+        Decimal("1000.00")
+    )
+
+    _, second_receiver = create_user_with_account(
+        Decimal("500.00")
+    )
+
+    first_response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('history-isolation-first')}",
+        json={
+            "sender_account_number": first_sender.account_number,
+            "receiver_account_number": first_receiver.account_number,
+            "amount": "100.00",
+        },
+        headers=create_authenticated_headers(first_user),
+    )
+
+    assert first_response.status_code == 201
+
+    second_response = client.post(
+        f"/transfers?idempotency_key={make_idempotency_key('history-isolation-second')}",
+        json={
+            "sender_account_number": second_sender.account_number,
+            "receiver_account_number": second_receiver.account_number,
+            "amount": "200.00",
+        },
+        headers=create_authenticated_headers(second_user),
+    )
+
+    assert second_response.status_code == 201
+
+    first_transfer_id = first_response.json()["id"]
+    second_transfer_id = second_response.json()["id"]
+
+    response = client.get(
+        "/transfers",
+        headers=create_authenticated_headers(first_user),
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    transfer_ids = {
+        item["id"]
+        for item in data["items"]
+    }
+
+    assert first_transfer_id in transfer_ids
+    assert second_transfer_id not in transfer_ids
+
+
 def test_unauthenticated_user_cannot_list_transfers():
     response = client.get("/transfers")
 
