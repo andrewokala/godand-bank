@@ -207,6 +207,108 @@ def test_transfer_moves_money_and_creates_ledger_entries():
         db.close()
 
 
+def test_multiple_transfers_reconcile_with_ledger_balances():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
+    try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        first_transfer = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=f"reconcile-transfer-{uuid4().hex}",
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("1000.00"),
+            currency="NGN",
+        )
+
+        second_transfer = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=f"reconcile-transfer-{uuid4().hex}",
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("500.00"),
+            currency="NGN",
+        )
+
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        sender_entries = (
+            db.query(LedgerEntry)
+            .filter(LedgerEntry.account_id == sender_account.id)
+            .order_by(LedgerEntry.created_at.asc(), LedgerEntry.id.asc())
+            .all()
+        )
+
+        receiver_entries = (
+            db.query(LedgerEntry)
+            .filter(LedgerEntry.account_id == receiver_account.id)
+            .order_by(LedgerEntry.created_at.asc(), LedgerEntry.id.asc())
+            .all()
+        )
+
+        assert len(sender_entries) == 2
+        assert len(receiver_entries) == 2
+
+        assert sender_entries[0].transfer_id == first_transfer.id
+        assert sender_entries[0].direction == LedgerDirection.DEBIT
+        assert sender_entries[0].amount == Decimal("1000.00")
+        assert sender_entries[0].balance_after == Decimal("9000.00")
+
+        assert sender_entries[1].transfer_id == second_transfer.id
+        assert sender_entries[1].direction == LedgerDirection.DEBIT
+        assert sender_entries[1].amount == Decimal("500.00")
+        assert sender_entries[1].balance_after == Decimal("8500.00")
+
+        assert receiver_entries[0].transfer_id == first_transfer.id
+        assert receiver_entries[0].direction == LedgerDirection.CREDIT
+        assert receiver_entries[0].amount == Decimal("1000.00")
+        assert receiver_entries[0].balance_after == Decimal("6000.00")
+
+        assert receiver_entries[1].transfer_id == second_transfer.id
+        assert receiver_entries[1].direction == LedgerDirection.CREDIT
+        assert receiver_entries[1].amount == Decimal("500.00")
+        assert receiver_entries[1].balance_after == Decimal("6500.00")
+
+        assert sender_account.balance == sender_entries[-1].balance_after
+        assert receiver_account.balance == receiver_entries[-1].balance_after
+
+        assert sender_account.balance == Decimal("8500.00")
+        assert receiver_account.balance == Decimal("6500.00")
+
+    finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
+        db.close()
+
+
 def test_transfer_rolls_back_when_balance_is_insufficient():
     db = SessionLocal()
 
