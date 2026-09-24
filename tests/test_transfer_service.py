@@ -357,6 +357,17 @@ def test_transfer_rolls_back_when_balance_is_insufficient():
             == 0
         )
 
+        assert (
+            db.query(LedgerEntry)
+            .filter(
+                LedgerEntry.account_id.in_(
+                    [sender_account.id, receiver_account.id]
+                )
+            )
+            .count()
+            == 0
+        )
+
     finally:
         db.rollback()
 
