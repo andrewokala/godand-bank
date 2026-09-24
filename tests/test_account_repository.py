@@ -9,6 +9,7 @@ from app.repositories.account import (
     generate_account_number,
     get_account_by_id,
     get_account_by_number,
+    get_account_by_number_for_update,
     get_accounts_by_user_id,
 )
 
@@ -49,6 +50,51 @@ def test_generate_account_number_skips_existing_number():
             generated_number = generate_account_number(db=db)
 
         assert generated_number == next_account_number
+
+    finally:
+        if "account" in locals() and account.id is not None:
+            db.delete(account)
+
+        if "user" in locals() and user.id is not None:
+            db.delete(user)
+
+        db.commit()
+        db.close()
+
+
+def test_get_account_by_number_for_update_returns_account():
+    db = SessionLocal()
+
+    email = "account-lock@test.godandbank.local"
+    account_number = "1122334455"
+
+    try:
+        user = User(
+            full_name="Account Lock Test",
+            email=email,
+            phone="+2348012399003",
+            password_hash="test_hash",
+            terms_accepted_at=datetime.now(UTC),
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        account = create_account(
+            db=db,
+            user_id=user.id,
+            account_number=account_number,
+        )
+
+        locked_account = get_account_by_number_for_update(
+            db=db,
+            account_number=account_number,
+        )
+
+        assert locked_account is not None
+        assert locked_account.id == account.id
+        assert locked_account.account_number == account_number
 
     finally:
         if "account" in locals() and account.id is not None:
