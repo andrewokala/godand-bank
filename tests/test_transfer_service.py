@@ -184,6 +184,7 @@ def test_transfer_moves_money_and_creates_ledger_entries():
         assert debit.account_id == sender_account.id
 
         assert credit.amount == Decimal("3000.00")
+        assert debit.amount == credit.amount
         assert credit.balance_after == Decimal("8000.00")
         assert credit.account_id == receiver_account.id
 
