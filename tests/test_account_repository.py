@@ -1,14 +1,64 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
 from app.db.session import SessionLocal
 from app.models import User
 from app.repositories.account import (
     create_account,
+    generate_account_number,
     get_account_by_id,
     get_account_by_number,
     get_accounts_by_user_id,
 )
+
+
+def test_generate_account_number_skips_existing_number():
+    db = SessionLocal()
+
+    email = "account-number-collision@test.godandbank.local"
+    existing_account_number = "1234567890"
+    next_account_number = "9876543210"
+
+    try:
+        user = User(
+            full_name="Account Number Test",
+            email=email,
+            phone="+2348012399002",
+            password_hash="test_hash",
+            terms_accepted_at=datetime.now(UTC),
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        account = create_account(
+            db=db,
+            user_id=user.id,
+            account_number=existing_account_number,
+        )
+
+        with patch(
+            "app.repositories.account.secrets.randbelow",
+            side_effect=[
+                int(existing_account_number),
+                int(next_account_number),
+            ],
+        ):
+            generated_number = generate_account_number(db=db)
+
+        assert generated_number == next_account_number
+
+    finally:
+        if "account" in locals() and account.id is not None:
+            db.delete(account)
+
+        if "user" in locals() and user.id is not None:
+            db.delete(user)
+
+        db.commit()
+        db.close()
 
 
 def test_account_repository():
