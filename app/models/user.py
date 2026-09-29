@@ -23,6 +23,10 @@ class User(Base):
             "phone ~ '^\\+[1-9][0-9]{1,14}$'",
             name="ck_users_phone_e164",
         ),
+        CheckConstraint(
+            "failed_login_count >= 0",
+            name="ck_users_failed_login_count_non_negative",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

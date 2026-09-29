@@ -46,3 +46,16 @@ def get_user_by_email(
     statement = select(User).where(User.email == email)
 
     return db.scalar(statement)
+
+def get_user_by_email_for_update(
+    db: Session,
+    email: str,
+) -> User | None:
+    statement = (
+        select(User)
+        .where(User.email == email)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+    return db.scalar(statement)

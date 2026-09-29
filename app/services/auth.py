@@ -4,8 +4,11 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, verify_password
 from app.models import KYCStatus, User
-from app.repositories.user import create_user, get_user_by_email
-
+from app.repositories.user import (
+    create_user,
+    get_user_by_email,
+    get_user_by_email_for_update,
+)
 
 MAX_FAILED_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
@@ -43,7 +46,7 @@ def authenticate_user(
     email: str,
     password: str,
 ) -> User:
-    user = get_user_by_email(
+    user = get_user_by_email_for_update(
         db=db,
         email=email,
     )

@@ -2,6 +2,7 @@ from app.db.session import SessionLocal
 from app.repositories.user import (
     create_user,
     get_user_by_email,
+    get_user_by_email_for_update,
     get_user_by_id,
 )
 
@@ -38,6 +39,38 @@ def test_user_repository():
 
         assert saved_by_email is not None
         assert saved_by_email.id == user.id
+
+    finally:
+        if "user" in locals() and user.id is not None:
+            db.delete(user)
+            db.commit()
+
+        db.close()
+
+
+
+def test_get_user_by_email_for_update_returns_user():
+    db = SessionLocal()
+
+    email = "repository-lock@test.godandbank.local"
+
+    try:
+        user = create_user(
+            db=db,
+            full_name="Repository Lock Test",
+            email=email,
+            phone="+2348012345004",
+            password_hash="test_hash",
+        )
+
+        locked_user = get_user_by_email_for_update(
+            db=db,
+            email=email,
+        )
+
+        assert locked_user is not None
+        assert locked_user.id == user.id
+        assert locked_user.email == email
 
     finally:
         if "user" in locals() and user.id is not None:
