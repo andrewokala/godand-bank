@@ -37,6 +37,10 @@ class Transfer(Base):
             "amount > 0",
             name="ck_transfers_amount_positive",
         ),
+        CheckConstraint(
+            "currency ~ '^[A-Z]{3}$'",
+            name="ck_transfers_currency_format",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

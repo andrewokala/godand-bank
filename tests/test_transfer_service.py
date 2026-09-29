@@ -860,3 +860,263 @@ def test_transfer_creates_audit_log():
 
         db.commit()
         db.close()
+
+def test_expired_idempotency_key_is_rejected():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
+    try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        idempotency_key = f"expired-transfer-{uuid4().hex}"
+
+        result = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=idempotency_key,
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("1000.00"),
+            currency="NGN",
+        )
+
+        idempotency_record = (
+            db.query(IdempotencyKey)
+            .filter(
+                IdempotencyKey.key == idempotency_key
+            )
+            .one()
+        )
+
+        idempotency_record.expires_at = datetime.now(UTC)
+
+        db.commit()
+
+        with pytest.raises(
+            ValueError,
+            match="Idempotency key has expired.",
+        ):
+            transfer(
+                db=db,
+                user_id=sender_user.id,
+                idempotency_key=idempotency_key,
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
+                amount=Decimal("1000.00"),
+                currency="NGN",
+            )
+
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        assert sender_account.balance == Decimal("9000.00")
+        assert receiver_account.balance == Decimal("6000.00")
+
+        transfers = (
+            db.query(Transfer)
+            .filter(
+                Transfer.idempotency_key == idempotency_key
+            )
+            .all()
+        )
+
+        assert len(transfers) == 1
+        assert transfers[0].id == result.id
+
+    finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
+        db.close()
+
+def test_expired_idempotency_key_cannot_create_second_transfer():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
+    try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(db)
+
+        idempotency_key = f"expired-transfer-{uuid4().hex}"
+
+        first_transfer = transfer(
+            db=db,
+            user_id=sender_user.id,
+            idempotency_key=idempotency_key,
+            sender_account_number=sender_account.account_number,
+            receiver_account_number=receiver_account.account_number,
+            amount=Decimal("1000.00"),
+            currency="NGN",
+        )
+
+        idempotency_record = (
+            db.query(IdempotencyKey)
+            .filter(
+                IdempotencyKey.key == idempotency_key
+            )
+            .one()
+        )
+
+        idempotency_record.expires_at = datetime.now(UTC)
+        db.commit()
+
+        with pytest.raises(
+            ValueError,
+            match="Idempotency key has expired.",
+        ):
+            transfer(
+                db=db,
+                user_id=sender_user.id,
+                idempotency_key=idempotency_key,
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
+                amount=Decimal("500.00"),
+                currency="NGN",
+            )
+
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        assert sender_account.balance == Decimal("9000.00")
+        assert receiver_account.balance == Decimal("6000.00")
+
+        transfers = (
+            db.query(Transfer)
+            .filter(
+                Transfer.sender_account_id == sender_account.id,
+                Transfer.receiver_account_id == receiver_account.id,
+            )
+            .all()
+        )
+
+        assert len(transfers) == 1
+        assert transfers[0].id == first_transfer.id
+
+    finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
+        db.close()
+
+def test_failed_transfer_rolls_back_idempotency_key():
+    db = SessionLocal()
+
+    sender_user = None
+    receiver_user = None
+    sender_account = None
+    receiver_account = None
+
+    idempotency_key = f"rollback-transfer-{uuid4().hex}"
+
+    try:
+        (
+            sender_user,
+            receiver_user,
+            sender_account,
+            receiver_account,
+        ) = create_test_accounts(
+            db,
+            sender_balance=Decimal("100.00"),
+            receiver_balance=Decimal("5000.00"),
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Insufficient balance.",
+        ):
+            transfer(
+                db=db,
+                user_id=sender_user.id,
+                idempotency_key=idempotency_key,
+                sender_account_number=sender_account.account_number,
+                receiver_account_number=receiver_account.account_number,
+                amount=Decimal("200.00"),
+                currency="NGN",
+            )
+
+        idempotency_record = (
+            db.query(IdempotencyKey)
+            .filter(
+                IdempotencyKey.key == idempotency_key
+            )
+            .one_or_none()
+        )
+
+        assert idempotency_record is None
+
+        assert (
+            db.query(Transfer)
+            .filter(
+                Transfer.idempotency_key == idempotency_key
+            )
+            .count()
+            == 0
+        )
+
+        db.refresh(sender_account)
+        db.refresh(receiver_account)
+
+        assert sender_account.balance == Decimal("100.00")
+        assert receiver_account.balance == Decimal("5000.00")
+
+    finally:
+        db.rollback()
+
+        cleanup_accounts(
+            db,
+            [sender_user, receiver_user],
+            sender_account,
+            receiver_account,
+        )
+
+        if sender_user:
+            db.delete(sender_user)
+
+        if receiver_user:
+            db.delete(receiver_user)
+
+        db.commit()
+        db.close()
