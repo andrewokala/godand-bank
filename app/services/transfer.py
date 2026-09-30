@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -60,6 +61,11 @@ def transfer(
         )
 
         if existing_key is not None:
+            if existing_key.expires_at <= datetime.now(UTC):
+                raise ValueError(
+                    "Idempotency key has expired."
+                )
+
             if existing_key.user_id != user_id:
                 raise ValueError(
                     "Idempotency key belongs to another user."
@@ -239,6 +245,11 @@ def transfer(
 
         if existing_key is None:
             raise
+
+        if existing_key.expires_at <= datetime.now(UTC):
+            raise ValueError(
+                "Idempotency key has expired."
+            )
 
         if existing_key.user_id != user_id:
             raise ValueError(

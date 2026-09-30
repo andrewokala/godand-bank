@@ -40,6 +40,10 @@ class Account(Base):
             "currency ~ '^[A-Z]{3}$'",
             name="ck_accounts_currency_format",
         ),
+        CheckConstraint(
+            "version >= 0",
+            name="ck_accounts_version_non_negative",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
