@@ -4,6 +4,7 @@ from app.models.transfer import Transfer, TransferStatus
 from app.models.ledger_entry import LedgerEntry, LedgerDirection
 from app.models.idempotency_key import IdempotencyKey
 from app.models.audit_log import AuditLog
+from app.models.revoked_token import RevokedToken
 
 __all__ = [
     "User",
@@ -16,4 +17,5 @@ __all__ = [
     "LedgerDirection",
     "IdempotencyKey",
     "AuditLog",
+    "RevokedToken",
 ]
