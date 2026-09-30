@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from jose import jwt
 from passlib.context import CryptContext
@@ -31,13 +31,17 @@ def create_access_token(
     user_id: UUID,
     expires_minutes: int = 30,
 ) -> str:
-    expire = datetime.now(UTC) + timedelta(
+    issued_at = datetime.now(UTC)
+    expire = issued_at + timedelta(
         minutes=expires_minutes,
     )
 
     payload = {
         "sub": str(user_id),
+        "iat": issued_at,
         "exp": expire,
+        "jti": str(uuid4()),
+        "type": "access",
     }
 
     return jwt.encode(
