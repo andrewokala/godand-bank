@@ -9,16 +9,16 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models import KYCStatus, User
+from app.repositories.revoked_token import get_revoked_token
 from app.repositories.user import get_user_by_id
 
 
 security = HTTPBearer()
 
 
-def get_current_user(
+def get_current_token_payload(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db),
-) -> User:
+) -> dict:
     token = credentials.credentials
 
     try:
@@ -51,7 +51,7 @@ def get_current_user(
             detail="Invalid token type.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     token_id = payload.get("jti")
 
     if not token_id:
@@ -60,6 +60,7 @@ def get_current_user(
             detail="Invalid token ID.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     issued_at = payload.get("iat")
 
     if issued_at is None:
@@ -68,6 +69,29 @@ def get_current_user(
             detail="Invalid token issue time.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    return payload
+
+
+def get_current_user(
+    payload: dict = Depends(get_current_token_payload),
+    db: Session = Depends(get_db),
+) -> User:
+    token_id = payload["jti"]
+
+    revoked_token = get_revoked_token(
+        db=db,
+        jti=token_id,
+    )
+
+    if revoked_token is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    subject = payload["sub"]
 
     try:
         user_id = UUID(subject)

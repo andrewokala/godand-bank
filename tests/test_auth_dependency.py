@@ -484,3 +484,63 @@ def test_token_without_iat_is_rejected():
 
     finally:
         db.close()
+
+def test_revoked_token_is_rejected():
+    db = SessionLocal()
+
+    try:
+        user = User(
+            id=uuid4(),
+            full_name="Revoked Token User",
+            email=f"revoked-{uuid4()}@example.com",
+            phone=f"+234{uuid4().int % 10_000_000:07d}",
+            password_hash="not-used",
+            terms_accepted_at=datetime.now(UTC),
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        token = create_access_token(user_id=user.id)
+
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+
+        from app.repositories.revoked_token import revoke_token
+
+        revoke_token(
+            db=db,
+            jti=payload["jti"],
+            user_id=user.id,
+            expires_at=datetime.fromtimestamp(
+                payload["exp"],
+                tz=UTC,
+            ),
+        )
+
+        db.commit()
+
+        app = create_test_app()
+
+        def override_get_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        client = TestClient(app)
+
+        response = client.get(
+            "/protected",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Token has been revoked."
+
+    finally:
+        db.rollback()
+        db.close()
