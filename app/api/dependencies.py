@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.dependencies import get_db
-from app.models import User
+from app.models import KYCStatus, User
 from app.repositories.user import get_user_by_id
 
 
@@ -42,6 +43,32 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    token_type = payload.get("type")
+
+    if token_type != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token_id = payload.get("jti")
+
+    if not token_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token ID.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    issued_at = payload.get("iat")
+
+    if issued_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token issue time.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     try:
         user_id = UUID(subject)
     except ValueError as error:
@@ -58,6 +85,20 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found.",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    now = datetime.now(UTC)
+
+    if user.locked_until is not None and user.locked_until > now:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is temporarily locked.",
+        )
+
+    if user.kyc_status == KYCStatus.REJECTED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account KYC has been rejected.",
         )
 
     return user
