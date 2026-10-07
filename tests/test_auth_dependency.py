@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.security import create_access_token
 from app.db.dependencies import get_db
 from app.db.session import SessionLocal
-from app.models import KYCStatus, User
+from app.models import KYCStatus, RevokedToken, User
 
 
 def create_test_app():
@@ -542,5 +542,13 @@ def test_revoked_token_is_rejected():
         assert response.json()["detail"] == "Token has been revoked."
 
     finally:
-        db.rollback()
+        if "user" in locals():
+            db.query(RevokedToken).filter(
+                RevokedToken.user_id == user.id
+            ).delete()
+            db.delete(user)
+            db.commit()
+        else:
+            db.rollback()
+
         db.close()
