@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 
@@ -11,14 +12,15 @@ from app.services.auth import authenticate_user, register_user
 def test_register_user_creates_user_with_hashed_password():
     db = SessionLocal()
 
-    email = "auth-register@test.godandbank.local"
+    email = f"auth-register-{uuid4().hex}@test.godandbank.local"
+    phone = f"+234{uuid4().int % 10**10:010d}"
 
     try:
         user = register_user(
             db=db,
             full_name="Auth Test User",
             email=email,
-            phone="+2348012345010",
+            phone=phone,
             password="TestPassword123!",
         )
 
@@ -40,14 +42,14 @@ def test_register_user_creates_user_with_hashed_password():
 def test_register_user_rejects_duplicate_email():
     db = SessionLocal()
 
-    email = "auth-duplicate@test.godandbank.local"
+    email = f"auth-duplicate-{uuid4().hex}@test.godandbank.local"
 
     try:
         first_user = register_user(
             db=db,
             full_name="First User",
             email=email,
-            phone="+2348012345011",
+            phone=f"+234{uuid4().int % 10**10:010d}",
             password="TestPassword123!",
         )
 
@@ -56,7 +58,7 @@ def test_register_user_rejects_duplicate_email():
                 db=db,
                 full_name="Second User",
                 email=email,
-                phone="+2348012345012",
+                phone=f"+234{uuid4().int % 10**10:010d}",
                 password="TestPassword123!",
             )
 
