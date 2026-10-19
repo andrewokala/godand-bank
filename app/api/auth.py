@@ -11,6 +11,8 @@ from app.models import User
 from app.repositories.revoked_token import revoke_token
 from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
 from app.services.auth import authenticate_user, register_user
+from app.schemas.user import SignupRequest
+from app.services.signup import signup_user
 
 
 router = APIRouter(
@@ -51,6 +53,48 @@ def register(
             detail="Unable to create user.",
         ) from error
 
+
+@router.post(
+    "/signup",
+    status_code=201,
+)
+def signup(
+    user_data: SignupRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        user, account = signup_user(
+            db=db,
+            data=user_data,
+        )
+
+        return {
+            "user_id": str(user.id),
+            "account_number": account.account_number,
+            "message": "Account created successfully.",
+        }
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "USER_ALREADY_EXISTS",
+                "message": str(error),
+                "field": "email",
+            },
+        ) from error
+
+    except IntegrityError as error:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "REGISTRATION_CONFLICT",
+                "message": "Registration could not be complete",
+                "field": None,
+            },
+        ) from error
 
 @router.post(
     "/login",

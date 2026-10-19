@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class UserCreate(BaseModel):
@@ -21,6 +21,18 @@ class UserCreate(BaseModel):
         min_length=8,
         max_length=128,
     )
+
+
+class SignupRequest(UserCreate):
+    terms_accepted: bool
+
+    @model_validator(mode="after")
+    def validate_terms(self):
+        if self.terms_accepted is not True:
+            raise ValueError(
+                "You must accept the terms and conditions."
+            )
+        return self
 
 
 class UserResponse(BaseModel):
