@@ -5,6 +5,8 @@ from app.models.ledger_entry import LedgerEntry, LedgerDirection
 from app.models.idempotency_key import IdempotencyKey
 from app.models.audit_log import AuditLog
 from app.models.revoked_token import RevokedToken
+from app.models.refresh_token import RefreshToken
+
 
 __all__ = [
     "User",
@@ -18,4 +20,5 @@ __all__ = [
     "IdempotencyKey",
     "AuditLog",
     "RevokedToken",
+    "RefreshToken"
 ]

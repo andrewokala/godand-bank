@@ -11,8 +11,13 @@ from app.models import User
 from app.repositories.revoked_token import revoke_token
 from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
 from app.services.auth import authenticate_user, register_user
-from app.schemas.user import SignupRequest
+from app.schemas.user import SignupRequest, RefreshTokenRequest
 from app.services.signup import signup_user
+from app.services.refresh_token import (
+    InvalidRefreshTokenError,
+    rotate_refresh_token,
+    create_refresh_token,
+)
 
 
 router = APIRouter(
@@ -121,9 +126,51 @@ def login(
         user_id=user.id,
     )
 
+    try:
+        refresh_token = create_refresh_token(
+            db=db,
+            user_id=user.id,
+        )
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
     return TokenResponse(
         access_token=access_token,
+        refresh_token=refresh_token,
     )
+
+@router.post("/refresh")
+def refresh(
+    request_data: RefreshTokenRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        access_token, refresh_token = rotate_refresh_token(
+            db=db,
+            raw_token=request_data.refresh_token,
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        }
+
+    except InvalidRefreshTokenError as error:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "INVALID_REFRESH_TOKEN",
+                "message": str(error),
+                "field": "refresh_token",
+            },
+        ) from error
 
 
 @router.post(
