@@ -6,6 +6,7 @@ from app.models.idempotency_key import IdempotencyKey
 from app.models.audit_log import AuditLog
 from app.models.revoked_token import RevokedToken
 from app.models.refresh_token import RefreshToken
+from app.models.auth_session import AuthSession
 
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "IdempotencyKey",
     "AuditLog",
     "RevokedToken",
-    "RefreshToken"
+    "RefreshToken",
+    "AuthSession",
 ]

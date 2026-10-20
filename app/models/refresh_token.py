@@ -23,6 +23,12 @@ class RefreshToken(Base):
         index=True,
     )
 
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
+
     token_hash: Mapped[str] = mapped_column(
         String(64),
         unique=True,

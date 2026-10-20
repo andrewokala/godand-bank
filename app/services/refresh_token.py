@@ -21,6 +21,7 @@ def hash_refresh_token(token: str) -> str:
 def create_refresh_token(
     db: Session,
     user_id,
+    session_id: UUID | None = None,
 ) -> str:
     raw_token = secrets.token_urlsafe(48)
 
@@ -32,6 +33,7 @@ def create_refresh_token(
 
     refresh_token = RefreshToken(
         user_id=user_id,
+        session_id=session_id,
         token_hash=token_hash,
         expires_at=expires_at,
     )
@@ -90,8 +92,7 @@ def rotate_refresh_token(
         user_id=stored_token.user_id,
     )
 
-    new_access_token = create_refresh_token(
-        db=db,
+    new_access_token = create_access_token(
         user_id=stored_token.user_id,
     )
 

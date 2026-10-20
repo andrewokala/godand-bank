@@ -13,6 +13,7 @@ from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
 from app.services.auth import authenticate_user, register_user
 from app.schemas.user import SignupRequest, RefreshTokenRequest
 from app.services.signup import signup_user
+from app.services.auth_session import create_auth_session
 from app.services.refresh_token import (
     InvalidRefreshTokenError,
     rotate_refresh_token,
@@ -127,9 +128,20 @@ def login(
     )
 
     try:
+        auth_session = create_auth_session(
+            db=db,
+            user_id=user.id,
+        )
+
+        access_token = create_access_token(
+            user_id=user.id,
+            session_id=auth_session.id,
+        )
+
         refresh_token = create_refresh_token(
             db=db,
             user_id=user.id,
+            session_id=auth_session.id,
         )
 
         db.commit()

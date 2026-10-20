@@ -30,11 +30,10 @@ def verify_password(
 def create_access_token(
     user_id: UUID,
     expires_minutes: int = 30,
+    session_id: UUID | None = None,
 ) -> str:
     issued_at = datetime.now(UTC)
-    expire = issued_at + timedelta(
-        minutes=expires_minutes,
-    )
+    expire = issued_at + timedelta(minutes=expires_minutes)
 
     payload = {
         "sub": str(user_id),
@@ -43,6 +42,9 @@ def create_access_token(
         "jti": str(uuid4()),
         "type": "access",
     }
+
+    if session_id is not None:
+        payload["sid"] = str(session_id)
 
     return jwt.encode(
         payload,
