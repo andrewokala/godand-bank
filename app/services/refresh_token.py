@@ -7,6 +7,9 @@ from sqlalchemy import select
 from uuid import UUID
 
 from app.models.refresh_token import RefreshToken
+from app.models import KYCStatus
+from app.models.user import User
+from app.services.auth_session import get_auth_session_for_update
 from app.core.security import create_access_token
 
 
@@ -51,10 +54,6 @@ def rotate_refresh_token(
     db: Session,
     raw_token: str,
 ) -> tuple[str, str]:
-    """
-    Validate an existing refresh token and replace it
-    wih a new access-token/refresh-token pair.
-    """
 
     token_hash = hash_refresh_token(raw_token)
 
@@ -75,14 +74,50 @@ def rotate_refresh_token(
 
     now = datetime.now(UTC)
 
-    if stored_token.revoked_at is not None:
+    if stored_token.session_id is None:
         raise InvalidRefreshTokenError(
-            "Refresh token has already been revoked."
+            "Refresh token has authentication session. Please log in again."
+        )
+
+    auth_session = get_auth_session_for_update(
+        db=db,
+        session_id=stored_token.session_id,
+    )
+
+    if auth_session is None:
+        raise InvalidRefreshTokenError(
+            "Authentication session not found."
+        )
+
+    if auth_session.user_id != stored_token.user_id:
+        raise InvalidRefreshTokenError(
+            "Refresh token does not belong to this session."
+        )
+    if auth_session.revoked_at is not None:
+        raise InvalidRefreshTokenError(
+            "Authentication session has been revoked."
         )
 
     if stored_token.expires_at <= now:
         raise InvalidRefreshTokenError(
             "Refresh token has expired"
+        )
+
+    user = db.get(User, stored_token.user_id)
+
+    if user is None:
+        raise InvalidRefreshTokenError(
+            "User account not found."
+        )
+
+    if user.locked_until is not None and user.locked_until > now:
+        raise InvalidRefreshTokenError(
+            "User account is temporarily locked."
+        )
+    
+    if user.kyc_status == KYCStatus.REJECTED:
+        raise InvalidRefreshTokenError(
+            "User account KYC has been rejected."
         )
     
     stored_token.revoked_at = now
@@ -90,10 +125,12 @@ def rotate_refresh_token(
     new_refresh_token = create_refresh_token(
         db=db,
         user_id=stored_token.user_id,
+        session_id=auth_session.id,
     )
 
     new_access_token = create_access_token(
         user_id=stored_token.user_id,
+        session_id=auth_session.id,
     )
 
     db.commit()
