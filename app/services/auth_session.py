@@ -37,6 +37,7 @@ def get_auth_session_for_update(
 def revoke_auth_session(
     db: Session,
     session_id: UUID,
+    user_id: UUID,
 ) -> bool:
     session = get_auth_session_for_update(
         db=db,
@@ -46,11 +47,13 @@ def revoke_auth_session(
     if session is None:
         return False
 
+    if session.user_id != user_id:
+        return False
+
     if session.revoked_at is not None:
         return False
 
     session.revoked_at = datetime.now(UTC)
-
     db.flush()
 
     return True

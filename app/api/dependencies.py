@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.dependencies import get_db
 from app.models import KYCStatus, User
+from app.models.auth_session import AuthSession
 from app.repositories.revoked_token import get_revoked_token
 from app.repositories.user import get_user_by_id
 
@@ -124,5 +125,36 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account KYC has been rejected.",
         )
+
+    session_id_value = payload.get("sid")
+
+    if session_id_value is not None:
+        try:
+            session_id = UUID(session_id_value)
+        except (ValueError, TypeError) as error:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authentication session.",
+            ) from error
+
+        auth_session = db.get(AuthSession, session_id)
+
+        if auth_session is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication session not found.",
+            )
+
+        if auth_session.user_id != user.id:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication session does not belong to this user.",
+            )
+
+        if auth_session.revoked_at is not None:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication session has been revoked.",
+            )
 
     return user

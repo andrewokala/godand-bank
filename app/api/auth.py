@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -8,12 +10,13 @@ from app.api.dependencies import get_current_token_payload, get_current_user
 from app.core.security import create_access_token
 from app.db.dependencies import get_db
 from app.models import User
+from app.models.refresh_token import RefreshToken
 from app.repositories.revoked_token import revoke_token
 from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
-from app.services.auth import authenticate_user, register_user
 from app.schemas.user import SignupRequest, RefreshTokenRequest
+from app.services.auth import authenticate_user, register_user
 from app.services.signup import signup_user
-from app.services.auth_session import create_auth_session
+from app.services.auth_session import create_auth_session, revoke_auth_session
 from app.services.refresh_token import (
     InvalidRefreshTokenError,
     rotate_refresh_token,
@@ -122,11 +125,6 @@ def login(
             status_code=401,
             detail=str(error),
         ) from error
-
-    access_token = create_access_token(
-        user_id=user.id,
-    )
-
     try:
         auth_session = create_auth_session(
             db=db,
@@ -193,19 +191,81 @@ def logout(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    expires_at = datetime.fromtimestamp(
-        payload["exp"],
-        tz=UTC,
-    )
+ 
+    session_id_value = payload.get("sid")
 
-    revoke_token(
-        db=db,
-        jti=payload["jti"],
-        user_id=user.id,
-        expires_at=expires_at,
-    )
+    if session_id_value is None:
+        expires_at = datetime.fromtimestamp(
+            payload["exp"],
+            tz=UTC,
+        )
 
-    db.commit()
+        try:
+            revoke_token(
+                db=db,
+                jti=payload["jti"],
+                user_id=user.id,
+                expires_at=expires_at,
+            )
+
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        return {
+            "message": "Logged out successfully.",
+        }
+
+    try:
+        session_id = UUID(session_id_value)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authentication session.",
+        ) from error
+
+    try:
+        session_revoked = revoke_auth_session(
+            db=db,
+            session_id=session_id,
+            user_id=user.id,
+        )
+
+        if not session_revoked:
+            db.rollback()
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication session is invalid or already revoked.",
+            )
+
+        now = datetime.now(UTC)
+
+        db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.session_id == session_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+
+        expires_at = datetime.fromtimestamp(
+            payload["exp"],
+            tz=UTC,
+        )
+
+        revoke_token(
+            db=db,
+            jti=payload["jti"],
+            user_id=user.id,
+            expires_at=expires_at,
+        )
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
     return {
         "message": "Logged out successfully.",
