@@ -229,3 +229,51 @@ def test_logout_revokes_entire_authentication_session():
 
     finally:
         cleanup_test_user(user.id)
+
+def test_user_cannot_revoke_another_users_session():
+    user_a = create_test_user()
+    user_b = create_test_user()
+
+    try:
+        user_a_tokens = create_session_tokens(user_a.id)
+        user_b_tokens = create_session_tokens(user_b.id)
+
+        response = client.post(
+            "/auth/logout",
+            headers={
+                "Authorization": (
+                    f"Bearer {user_a_tokens['access_token_1']}"
+                ),
+            },
+        )
+
+        assert response.status_code == 200
+
+        # User B's session must remain active.
+        db = SessionLocal()
+
+        try:
+            user_b_session = db.get(
+                AuthSession,
+                user_b_tokens["session_id"],
+            )
+
+            assert user_b_session is not None
+            assert user_b_session.revoked_at is None
+
+        finally:
+            db.close()
+
+        # User B must still be able to use their refresh token.
+        refresh_response = client.post(
+            "/auth/refresh",
+            json={
+                "refresh_token": user_b_tokens["refresh_token_1"],
+            },
+        )
+
+        assert refresh_response.status_code == 200
+
+    finally:
+        cleanup_test_user(user_a.id)
+        cleanup_test_user(user_b.id)
