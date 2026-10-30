@@ -6,8 +6,11 @@ from app.core.security import create_access_token
 from app.db.session import SessionLocal
 from app.main import app
 from app.models import RevokedToken, User
+from app.models.auth_session import AuthSession
+from app.models.refresh_token import RefreshToken
 from app.repositories.user import create_user
-
+from app.services.auth_session import create_auth_session
+from app.services.refresh_token import create_refresh_token
 
 client = TestClient(app)
 
@@ -36,6 +39,14 @@ def cleanup_test_user(user_id):
             RevokedToken.user_id == user_id
         ).delete(synchronize_session=False)
 
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == user_id
+        ).delete(synchronize_session=False)
+
+        db.query(AuthSession).filter(
+            AuthSession.user_id == user_id
+        ).delete(synchronize_session=False)
+
         db.query(User).filter(
             User.id == user_id
         ).delete(synchronize_session=False)
@@ -45,6 +56,55 @@ def cleanup_test_user(user_id):
     finally:
         db.close()
 
+def create_session_tokens(user_id):
+    db = SessionLocal()
+
+    try:
+        auth_session = create_auth_session(
+            db=db,
+            user_id=user_id,
+        )
+
+        access_token_1 = create_access_token(
+            user_id=user_id,
+            session_id=auth_session.id,
+        )
+
+        access_token_2 = create_access_token(
+            user_id=user_id,
+            session_id=auth_session.id,
+        )
+
+        refresh_token_1 = create_refresh_token(
+            db=db,
+            user_id=user_id,
+            session_id=auth_session.id,
+        )
+
+        refresh_token_2 = create_refresh_token(
+            db=db,
+            user_id=user_id,
+            session_id=auth_session.id,
+        )
+
+        session_id = auth_session.id
+
+        db.commit()
+
+        return {
+            "session_id": session_id,
+            "access_token_1": access_token_1,
+            "access_token_2": access_token_2,
+            "refresh_token_1": refresh_token_1,
+            "refresh_token_2": refresh_token_2,
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
 
 def test_logout_revokes_token():
     user = create_test_user()
@@ -95,6 +155,77 @@ def test_logout_rejects_already_revoked_token():
 
         assert second_response.status_code == 401
         assert second_response.json()["detail"] == "Token has been revoked."
+
+    finally:
+        cleanup_test_user(user.id)
+
+def test_logout_revokes_entire_authentication_session():
+    user = create_test_user()
+
+    try:
+        tokens = create_session_tokens(user.id)
+
+        logout_response = client.post(
+            "/auth/logout",
+            headers={
+                "Authorization": (
+                    f"Bearer {tokens['access_token_1']}"
+                ),
+            },
+        )
+
+        assert logout_response.status_code == 200
+
+        db = SessionLocal()
+
+        try:
+            auth_session = db.get(
+                AuthSession,
+                tokens["session_id"],
+            )
+
+            assert auth_session is not None
+            assert auth_session.revoked_at is not None
+
+            refresh_tokens = (
+                db.query(RefreshToken)
+                .filter(
+                    RefreshToken.session_id == tokens["session_id"]
+                )
+                .all()
+            )
+
+            assert len(refresh_tokens) == 2
+
+            assert all(
+                token.revoked_at is not None
+                for token in refresh_tokens
+            )
+
+        finally:
+            db.close()
+
+        protected_response = client.get(
+            "/accounts",
+            headers={
+                "Authorization": (
+                    f"Bearer {tokens['access_token_2']}"
+                ),
+            },
+        )
+
+        assert protected_response.status_code == 401
+
+        for refresh_token in (
+            tokens["refresh_token_1"],
+            tokens["refresh_token_2"],
+        ):
+            refresh_response = client.post(
+                "/auth/refresh",
+                json={"refresh_token": refresh_token},
+            )
+
+            assert refresh_response.status_code == 401
 
     finally:
         cleanup_test_user(user.id)
